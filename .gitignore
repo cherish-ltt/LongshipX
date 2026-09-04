@@ -1,2 +1,12 @@
-/target
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# macOS
 .DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
