@@ -10,20 +10,19 @@ repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # 领域层(依赖方向只指向内层,PRD 4.1)
-longshipx-domain = { path = "../domain", version = "=0.1.0" }
+longshipx-domain = { workspace = true }
 # 异步端口 trait
-async-trait = "=0.1.92"
+async-trait = { workspace = true }
 # 错误定义
-thiserror = "=2.0.20"
-# 时间
-chrono = { version = "=0.4.45", features = ["serde"] }
-# 标识
-uuid = { version = "=1.26.0", features = ["v7"] }
+thiserror = { workspace = true }
+# 时间与标识
+chrono = { workspace = true }
+uuid = { workspace = true }
 # Room Actor / 端口使用的异步原语
-tokio = { version = "=1.53.1", features = ["sync", "rt"] }
+tokio = { workspace = true, features = ["sync", "rt"] }
 # 用例内结构化日志
-tracing = "=0.1.44"
+tracing = { workspace = true }
 
 [dev-dependencies]
 # 异步单测(含超时等待)
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

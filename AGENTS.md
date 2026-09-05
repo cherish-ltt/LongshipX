@@ -100,6 +100,7 @@ jobs:
   - `name`、`version`、`edition`、`authors`、`description`、`license`、`repository` 等。
 - 依赖项必须**归类**，使用 `#` 注释说明每组依赖的用途。
 - 每个依赖必须使用 `version = "x.y.z"` **锁定具体版本**（使用 `=` 号），不得使用范围限定符。
+- 本项目为 Cargo workspace:**第三方依赖统一声明在根 `Cargo.toml` 的 `[workspace.dependencies]`**(`=` 锁定 + 分组注释),子 crate 以 `workspace = true` 引用、feature 差异增量声明;细则见第 10.1 节。
 - 使用 `edition = "2024"` 以及环境中的 Rust 版本，例如:`rust-version = "1.95"`
 
 示例结构：
@@ -230,7 +231,8 @@ msrv = "1.95.0"
 
 - 项目为 Cargo workspace(根 `Cargo.toml` 为 virtual manifest,`resolver = "3"`),成员见根 `Cargo.toml` 的 `members`。
 - crate 包名统一加 `longshipx-` 前缀(如 `longshipx-domain`),保证 crates.io 可发布;目录名保持 PRD 中的 `domain`/`application`/`net-kit`/`protocol`/`infrastructure`/`gateway`/`server-bin` 与 `migration`。
-- 每个 crate 的 `Cargo.toml` 必须内联完整元数据(name/version/edition/rust-version/authors/description/license/repository),依赖逐条 `=锁定版本` 并按用途加 `#` 注释分组;不使用 workspace 依赖继承,保证每个 crate 可独立审阅。
+- 每个 crate 的 `Cargo.toml` 必须内联完整元数据(name/version/edition/rust-version/authors/description/license/repository)。
+- **第三方依赖统一在根 `Cargo.toml` 的 `[workspace.dependencies]` 管理**:`=` 锁定版本、按用途分组注释;子 crate 一律 `dep = { workspace = true }` 引用。仅 tokio 等 feature 需求不同的依赖,在子 crate 内增量追加 `features = [...]`(与 workspace 声明叠加)。新依赖先入根清单,禁止在子 crate 内直接写版本号。
 
 ### 10.2 分层红线(代码评审 checklist)
 

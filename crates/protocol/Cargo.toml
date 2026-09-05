@@ -10,17 +10,17 @@ repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # protobuf 运行时(PRD 8.2:跨语言序列化方案)
-prost = "=0.14.4"
+prost = { workspace = true }
 # 帧与 Codec trait 定义
-longshipx-net-kit = { path = "../net-kit", version = "=0.1.0" }
-thiserror = "=2.0.20"
+longshipx-net-kit = { workspace = true }
+thiserror = { workspace = true }
 
 [build-dependencies]
 # prost 代码生成
-prost-build = "=0.14.4"
+prost-build = { workspace = true }
 # 纯 Rust protobuf 编译器(无需系统 protoc,CI 友好)
-protox = "=0.9.1"
+protox = { workspace = true }
 
 [dev-dependencies]
 # 路由器异步单测
-tokio = { version = "=1.53.1", features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt"] }

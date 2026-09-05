@@ -9,12 +9,12 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
-# 标识与时间(PRD 第 5 章:domain 允许的极小依赖面)
-uuid = { version = "=1.26.0", features = ["v7", "serde"] }
-chrono = { version = "=0.4.45", features = ["serde"] }
+# 标识与时间
+uuid = { workspace = true }
+chrono = { workspace = true }
 # 错误定义
-thiserror = "=2.0.20"
-# 异步仓储接口(PRD 5.2 示例使用 async_trait)
-async-trait = "=0.1.92"
-# 序列化标记(仅 derive,禁止引入任何技术栈,见 PRD 5 ⚠️ serde 例外说明)
-serde = { version = "=1.0.229", features = ["derive"] }
+thiserror = { workspace = true }
+# 异步仓储接口(PRD 5.2)
+async-trait = { workspace = true }
+# 序列化标记(仅 derive,禁止引入任何技术栈)
+serde = { workspace = true }

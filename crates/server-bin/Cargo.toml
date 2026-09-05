@@ -14,34 +14,31 @@ path = "src/main.rs"
 
 [dependencies]
 # 组装全部分层(PRD 4.2 composition root)
-longshipx-domain = { path = "../domain", version = "=0.1.0" }
-longshipx-application = { path = "../application", version = "=0.1.0" }
-longshipx-net-kit = { path = "../net-kit", version = "=0.1.0" }
-longshipx-protocol = { path = "../protocol", version = "=0.1.0" }
-longshipx-infrastructure = { path = "../infrastructure", version = "=0.1.0" }
-longshipx-gateway = { path = "../gateway", version = "=0.1.0" }
-longshipx-migration = { path = "../../migration", version = "=0.1.0" }
+longshipx-domain = { workspace = true }
+longshipx-application = { workspace = true }
+longshipx-net-kit = { workspace = true }
+longshipx-protocol = { workspace = true }
+longshipx-infrastructure = { workspace = true }
+longshipx-gateway = { workspace = true }
+longshipx-migration = { workspace = true }
 # 异步运行时(多线程,PRD 9.4)
-tokio = { version = "=1.53.1", features = ["full"] }
-# TLS 配置类型(TCP/HTTP 双入口共用同一份 rustls 配置)
-rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
-# 数据库连接池参数构造(与 infrastructure 同版本)
-sea-orm = { version = "=2.0.2", default-features = false, features = [
-    "sqlx-postgres",
-    "runtime-tokio-rustls",
-] }
+tokio = { workspace = true, features = ["full"] }
 # HTTP 网关与 /metrics 端点复用同一套 axum 栈
-axum = "=0.8.9"
+axum = { workspace = true }
+# TLS 配置类型(TCP/HTTP 双入口共用同一份 rustls 配置)
+rustls = { workspace = true }
+# 数据库连接池参数构造(与 infrastructure 同版本)
+sea-orm = { workspace = true }
 # 结构化日志(PRD 第 12 章)
-tracing = "=0.1.44"
-tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 # Prometheus 指标导出
-metrics = "=0.24.6"
-metrics-exporter-prometheus = "=0.18.3"
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 # .env 加载(PRD 18.3)
-dotenvy = "=0.15.7"
+dotenvy = { workspace = true }
 
 [dev-dependencies]
 # quickstart_client 示例:TLS 客户端(与 net-kit 同版本)
-rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
-tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }

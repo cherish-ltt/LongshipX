@@ -9,45 +9,42 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
-# 入站适配依赖:网络框架 + 协议 + 应用层(PRD 4.2,不直接依赖 domain)
-longshipx-net-kit = { path = "../net-kit", version = "=0.1.0" }
-longshipx-protocol = { path = "../protocol", version = "=0.1.0" }
-longshipx-application = { path = "../application", version = "=0.1.0" }
-longshipx-domain = { path = "../domain", version = "=0.1.0" }
+# 入站适配依赖:网络框架 + 协议 + 应用层(PRD 4.2,不直接调用 domain 业务逻辑)
+longshipx-net-kit = { workspace = true }
+longshipx-protocol = { workspace = true }
+longshipx-application = { workspace = true }
+longshipx-domain = { workspace = true }
 # 异步运行时
-tokio = { version = "=1.53.1", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "net", "io-util", "macros"] }
 # HTTP 入口(PRD 8.3:登录/注册等低频操作)
-axum = "=0.8.9"
-# HTTP 入口的 TLS 终结(复用 net-kit 的 rustls 配置,强制 HTTPS)
-axum-server = { version = "=0.8.0", default-features = false, features = ["tls-rustls-no-provider"] }
-# HTTPS 终结的 TLS 配置类型(与 net-kit 同版本)
-rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
-# HTTP DTO 序列化
-serde = { version = "=1.0.229", features = ["derive"] }
+axum = { workspace = true }
+# HTTP 入口 TLS 终结(复用 net-kit 的 rustls 配置,强制 HTTPS)
+axum-server = { workspace = true }
+rustls = { workspace = true }
+# HTTP DTO 序列化与时间戳
+serde = { workspace = true }
+chrono = { workspace = true }
 # 连接 ID
-uuid = { version = "=1.26.0", features = ["v7"] }
-# 会话心跳时间戳
-chrono = { version = "=0.4.45", features = ["serde"] }
+uuid = { workspace = true }
 # 共享状态(不中毒的 Mutex,PRD 9.3)
-parking_lot = "=0.12.5"
+parking_lot = { workspace = true }
 # 错误定义
-thiserror = "=2.0.20"
-# 指标(PRD 第 12 章)
-metrics = "=0.24.6"
-# 日志
-tracing = "=0.1.44"
+thiserror = { workspace = true }
+# 指标(PRD 第 12 章)与日志
+metrics = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 # 路由层单测(oneshot 请求)
-tower = { version = "=0.5.3", features = ["util"] }
-serde_json = "=1.0.151"
-http-body-util = "=0.1.3"
-# 端到端 TLS 测试:自签证书与客户端连接
-rcgen = "=0.14.10"
-rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
-tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true }
+http-body-util = { workspace = true }
+serde_json = { workspace = true }
 # 测试中实现端口 trait
-async-trait = "=0.1.92"
+async-trait = { workspace = true }
+# 端到端 TLS 测试:自签证书与客户端连接
+rcgen = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # 端到端测试用内存版基础设施(仅测试依赖,不进入生产装配)
-longshipx-infrastructure = { path = "../infrastructure", version = "=0.1.0" }
+longshipx-infrastructure = { workspace = true }

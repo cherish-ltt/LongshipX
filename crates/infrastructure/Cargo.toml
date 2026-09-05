@@ -10,34 +10,28 @@ repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # 内层 crate(实现其定义的 trait,依赖倒置)
-longshipx-domain = { path = "../domain", version = "=0.1.0" }
-longshipx-application = { path = "../application", version = "=0.1.0" }
+longshipx-domain = { workspace = true }
+longshipx-application = { workspace = true }
 # PostgreSQL + SeaORM 2.0 稳定版(PRD 7.2 二编:2.0 已 GA,优先使用)
-sea-orm = { version = "=2.0.2", features = [
-    "sqlx-postgres",
-    "runtime-tokio-rustls",
-    "macros",
-    "with-chrono",
-    "with-uuid",
-    "with-json",
-] }
+sea-orm = { workspace = true }
 # Redis 客户端(PRD 7.5:官方 redis-rs + MultiplexedConnection)
-redis = { version = "=1.6.0", features = ["tokio-comp"] }
+redis = { workspace = true }
 # argon2id 密码哈希(PRD 第 10 章)
-argon2 = { version = "=0.6.0", features = ["password-hash", "alloc"] }
-# 异步端口实现
-async-trait = "=0.1.92"
-thiserror = "=2.0.20"
-uuid = { version = "=1.26.0", features = ["v7"] }
-chrono = { version = "=0.4.45", features = ["serde"] }
-# audit_logs.detail JSONB 列
-serde_json = "=1.0.151"
+argon2 = { workspace = true }
 # token 随机数(密码学安全)
-getrandom = "=0.4.3"
+getrandom = { workspace = true }
+# 异步端口实现与错误定义
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+# 标识与时间
+uuid = { workspace = true }
+chrono = { workspace = true }
+# audit_logs.detail JSONB 列
+serde_json = { workspace = true }
 # 进程内事件分发与内存存储
-tokio = { version = "=1.53.1", features = ["sync"] }
-tracing = "=0.1.44"
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 # 异步单测(含暂停时钟的过期测试)
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
