@@ -22,6 +22,8 @@ pub struct Config {
 pub struct NetworkConfig {
     pub tcp_bind_addr: String,
     pub http_bind_addr: String,
+    /// 可选的 HTTP→HTTPS 跳转监听地址;None = 不绑定任何明文监听(PRD R1)。
+    pub http_redirect_addr: Option<String>,
     pub wss_bind_addr: String,
     pub max_connections: usize,
     pub backlog: u32,
@@ -171,6 +173,7 @@ fn network_from_lookup(lookup: &mut Lookup<'_>) -> ConfigResult<NetworkConfig> {
     Ok(NetworkConfig {
         tcp_bind_addr: env_str(lookup, "SERVER_TCP_BIND_ADDR", "0.0.0.0:8080"),
         http_bind_addr: env_str(lookup, "SERVER_HTTP_BIND_ADDR", "0.0.0.0:8081"),
+        http_redirect_addr: env_opt_str(lookup, "SERVER_HTTP_REDIRECT_ADDR"),
         wss_bind_addr: env_str(lookup, "SERVER_WSS_BIND_ADDR", "0.0.0.0:8082"),
         max_connections: env_usize(lookup, "SERVER_MAX_CONNECTIONS", 10_000)?,
         backlog: env_u32(lookup, "SERVER_CONNECTION_BACKLOG", 1024)?,
@@ -345,6 +348,10 @@ mod tests {
         let config = Config::from_lookup(|_| None).unwrap();
         assert_eq!(config.network.tcp_bind_addr, "0.0.0.0:8080");
         assert_eq!(config.network.http_bind_addr, "0.0.0.0:8081");
+        assert_eq!(
+            config.network.http_redirect_addr, None,
+            "默认不绑定任何明文监听"
+        );
         assert_eq!(config.network.wss_bind_addr, "0.0.0.0:8082");
         assert_eq!(config.network.max_connections, 10_000);
         assert_eq!(config.network.backlog, 1024);
@@ -392,6 +399,7 @@ mod tests {
     fn overrides_apply_and_blank_optional_becomes_none() {
         let config = config_with(&[
             ("SERVER_TCP_BIND_ADDR", "127.0.0.1:9000"),
+            ("SERVER_HTTP_REDIRECT_ADDR", "0.0.0.0:80"),
             ("SERVER_MAX_FRAME_SIZE", "4096"),
             ("SERVER_MAX_CONNECTIONS", "500"),
             ("SERVER_TCP_NODELAY", "false"),
@@ -402,6 +410,10 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(config.network.tcp_bind_addr, "127.0.0.1:9000");
+        assert_eq!(
+            config.network.http_redirect_addr.as_deref(),
+            Some("0.0.0.0:80")
+        );
         assert_eq!(config.network.max_frame_size, 4096);
         assert_eq!(config.network.max_connections, 500);
         assert!(!config.network.tcp_nodelay);

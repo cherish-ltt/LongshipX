@@ -14,11 +14,15 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub fn router(state: Arc<HttpState>) -> Router {
+    // HTTPS 入口统一携带 HSTS(见 http/server.rs:HTTP 明文监听仅做跳转)。
     Router::new()
         .route("/healthz", get(healthz))
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/me", get(me))
+        .layer(axum::middleware::from_fn(
+            crate::http::server::hsts_middleware,
+        ))
         .with_state(state)
 }
 

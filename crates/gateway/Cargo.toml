@@ -18,6 +18,10 @@ longshipx-domain = { path = "../domain", version = "=0.1.0" }
 tokio = { version = "=1.53.1", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
 # HTTP 入口(PRD 8.3:登录/注册等低频操作)
 axum = "=0.8.9"
+# HTTP 入口的 TLS 终结(复用 net-kit 的 rustls 配置,强制 HTTPS)
+axum-server = { version = "=0.8.0", default-features = false, features = ["tls-rustls-no-provider"] }
+# HTTPS 终结的 TLS 配置类型(与 net-kit 同版本)
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
 # HTTP DTO 序列化
 serde = { version = "=1.0.229", features = ["derive"] }
 # 连接 ID

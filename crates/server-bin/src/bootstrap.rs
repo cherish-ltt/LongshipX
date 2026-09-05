@@ -50,8 +50,10 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
 
     let tokens = connect_token_store(&config).await?;
     let services = build_services(&config, db.clone(), tokens)?;
-    let tcp = start_tcp_gateway(&config, &services, shutdown_rx.clone()).await?;
-    start_http_server(&config, &services, shutdown_rx.clone()).await?;
+    let tls_config = build_tls_config(&config.tls)?;
+    let tcp =
+        start_tcp_gateway(&config, &services, tls_config.clone(), shutdown_rx.clone()).await?;
+    start_http_server(&config, &services, tls_config, shutdown_rx.clone()).await?;
 
     shutdown::wait_for_signal(shutdown_tx).await;
     graceful_teardown(&config, &services, &tcp, db).await;
@@ -152,9 +154,10 @@ fn build_services(
 async fn start_tcp_gateway(
     config: &Config,
     services: &Services,
+    tls_config: Arc<rustls::ServerConfig>,
     shutdown_rx: watch::Receiver<bool>,
 ) -> Result<Arc<TcpGateway>, Box<dyn Error>> {
-    let acceptor = build_tls_acceptor(&config.tls)?;
+    let acceptor = longshipx_net_kit::TlsAcceptor::from(tls_config);
     let bind_addr: SocketAddr = config
         .network
         .tcp_bind_addr
@@ -195,18 +198,19 @@ async fn start_tcp_gateway(
     Ok(gateway)
 }
 
-fn build_tls_acceptor(tls: &TlsConfig) -> Result<longshipx_net_kit::TlsAcceptor, Box<dyn Error>> {
-    let acceptor = longshipx_net_kit::tls::server_acceptor_from_files(
+fn build_tls_config(tls: &TlsConfig) -> Result<Arc<rustls::ServerConfig>, Box<dyn Error>> {
+    let config = longshipx_net_kit::tls::server_config_from_files(
         Path::new(&tls.cert_path),
         Path::new(&tls.key_path),
     )?;
-    tracing::info!(cert = %tls.cert_path, "TLS 1.3 服务端证书加载完成");
-    Ok(acceptor)
+    tracing::info!(cert = %tls.cert_path, "TLS 1.3 服务端证书加载完成(TCP/HTTP 共用)");
+    Ok(config)
 }
 
 async fn start_http_server(
     config: &Config,
     services: &Services,
+    tls_config: Arc<rustls::ServerConfig>,
     shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), Box<dyn Error>> {
     let bind_addr: SocketAddr = config
@@ -221,18 +225,23 @@ async fn start_http_server(
         tokens: services.tokens.clone(),
     });
     let app = longshipx_gateway::http::routes::router(state);
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    let addr = listener.local_addr()?;
-    tracing::info!(%addr, "HTTP 网关开始监听");
-    let mut shutdown_for_axum = shutdown_rx.clone();
-    tokio::spawn(async move {
-        let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
-            let _ = shutdown_for_axum.wait_for(|done| *done).await;
-        });
-        if let Err(err) = serve.await {
-            tracing::error!(error = %err, "HTTP 服务异常退出");
-        }
-    });
+    // 🔴 HTTP 入口只监听 TLS(PRD R1:禁止明文路径);HSTS 响应头在 routes 层统一附加。
+    let bound =
+        longshipx_gateway::http::serve_https(bind_addr, tls_config, app, shutdown_rx.clone())
+            .await?;
+    tracing::info!(%bound, "HTTPS 网关开始监听");
+
+    // 可选:明文监听仅做 308 跳转;未配置 SERVER_HTTP_REDIRECT_ADDR 则无任何明文监听。
+    match &config.network.http_redirect_addr {
+        Some(redirect_addr) => {
+            let addr: SocketAddr = redirect_addr
+                .parse()
+                .map_err(|err| format!("SERVER_HTTP_REDIRECT_ADDR 非法: {err}"))?;
+            let bound = longshipx_gateway::http::serve_redirect(addr, shutdown_rx).await?;
+            tracing::info!(%bound, "HTTP→HTTPS 自动跳转已启用");
+        },
+        None => tracing::info!("未配置 SERVER_HTTP_REDIRECT_ADDR,进程内无任何明文 HTTP 监听"),
+    }
     Ok(())
 }
 

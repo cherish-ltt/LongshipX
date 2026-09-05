@@ -280,6 +280,7 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 | 切换数据库(如 MySQL) | `infrastructure` 仓储实现 + `sea-orm` feature(`sqlx-mysql`)+ `.env` 连接串;domain/application 零改动 |
 | 调整限流/慢客户端策略 | `crates/gateway/src/tcp/rate_limit.rs`、`handler.rs` |
 | 调整优雅停机行为 | `crates/server-bin/src/bootstrap.rs`(`graceful_teardown`)+ `gateway/src/tcp/server.rs` |
+| HTTP 入口 TLS/跳转策略 | `crates/gateway/src/http/server.rs`(HTTPS 终结 + 308 跳转)+ 配置项 `SERVER_HTTP_REDIRECT_ADDR` |
 | 换 token/密码实现 | `infrastructure/src/cache/`、`password.rs`(实现 application 端口,业务层零改动) |
 | 加指标项 | 各处 `metrics::counter!/gauge!` 调用 + `server-bin/src/observability.rs` |
 

@@ -11,28 +11,29 @@ pub fn install_ring_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-/// 从 PEM 证书/私钥构建 TLS 1.3-only 的服务端接收器。
-pub fn server_acceptor_from_files(
+/// 从 PEM 证书/私钥构建 TLS 1.3-only 的服务端配置;支持 `~/` 前缀展开到用户主目录。
+/// TCP 长连接与 HTTP(axum)入口共用同一份配置,证书只加载一次。
+pub fn server_config_from_files(
     cert_path: &Path,
     key_path: &Path,
-) -> Result<crate::TlsAcceptor, NetError> {
+) -> Result<Arc<rustls::ServerConfig>, NetError> {
     let cert_pem = std::fs::read(cert_path).map_err(|err| {
         NetError::TlsConfig(format!("读取证书 {:?} 失败: {err}", cert_path.display()))
     })?;
     let key_pem = std::fs::read(key_path).map_err(|err| {
         NetError::TlsConfig(format!("读取私钥 {:?} 失败: {err}", key_path.display()))
     })?;
-    server_acceptor_from_pem_bytes(
+    server_config_from_pem_bytes(
         &String::from_utf8_lossy(&cert_pem),
         &String::from_utf8_lossy(&key_pem),
     )
 }
 
-/// 从 PEM 字节串构建 TLS 1.3-only 的服务端接收器(便于测试)。
-pub fn server_acceptor_from_pem_bytes(
+/// 从 PEM 字节串构建 TLS 1.3-only 的服务端配置(便于测试)。
+pub fn server_config_from_pem_bytes(
     cert_pem: &str,
     key_pem: &str,
-) -> Result<crate::TlsAcceptor, NetError> {
+) -> Result<Arc<rustls::ServerConfig>, NetError> {
     let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
         .collect::<Result<_, _>>()
         .map_err(|err| NetError::TlsConfig(format!("解析证书失败: {err}")))?;
@@ -41,13 +42,13 @@ pub fn server_acceptor_from_pem_bytes(
     }
     let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes())
         .map_err(|err| NetError::TlsConfig(format!("解析私钥失败: {err}")))?;
-    build_acceptor(certs, key)
+    build_config(certs, key)
 }
 
-fn build_acceptor(
+fn build_config(
     certs: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
-) -> Result<crate::TlsAcceptor, NetError> {
+) -> Result<Arc<rustls::ServerConfig>, NetError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -55,7 +56,27 @@ fn build_acceptor(
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|err| NetError::TlsConfig(format!("证书与私钥不匹配: {err}")))?;
-    Ok(crate::TlsAcceptor::from(Arc::new(config)))
+    Ok(Arc::new(config))
+}
+
+/// 从 PEM 证书/私钥构建 TLS 1.3-only 的服务端接收器(Transport 用)。
+pub fn server_acceptor_from_files(
+    cert_path: &Path,
+    key_path: &Path,
+) -> Result<crate::TlsAcceptor, NetError> {
+    Ok(crate::TlsAcceptor::from(server_config_from_files(
+        cert_path, key_path,
+    )?))
+}
+
+/// 从 PEM 字节串构建 TLS 1.3-only 的服务端接收器(测试用)。
+pub fn server_acceptor_from_pem_bytes(
+    cert_pem: &str,
+    key_pem: &str,
+) -> Result<crate::TlsAcceptor, NetError> {
+    Ok(crate::TlsAcceptor::from(server_config_from_pem_bytes(
+        cert_pem, key_pem,
+    )?))
 }
 
 #[cfg(test)]
