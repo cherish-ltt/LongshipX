@@ -1,6 +1,8 @@
-# LongshipX
-
-> **Longship(长船)· Long-connection(长连接)· Long-lasting(长长久久)**
+<div align="center">
+  <img src="docs/assets/logo.png" alt="LongshipX" width="420" />
+  <h1>LongshipX</h1>
+  <p><b>Longship(长船)· Long-connection(长连接)· Long-lasting(长长久久)</b></p>
+</div>
 
 **命名寓意**:Longship 是维京人的长船——木质龙骨历经风浪仍稳固耐航,寓意这套长连接游戏服务器**长长久久、稳定可靠**;"长船"与游戏服务器的立身之本"**长连接**"同名同源;"**X**"则是可自由组合的因子——接入 PostgreSQL、SeaORM、Redis,或将来切换 MySQL、更换传输协议,都只动出站适配器,业务核心分毫不变(得益于洋葱架构的端口 trait,见下文"从哪些文件逐步开发")。
 
@@ -307,3 +309,9 @@ cargo llvm-cov --workspace --summary-only   # 覆盖率
 ## License
 
 MIT OR Apache-2.0(见 `LICENSE-MIT` / `LICENSE-APACHE`)。
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ by the LongshipX team</sub>
+</div>
