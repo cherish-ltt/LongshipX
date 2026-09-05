@@ -18,6 +18,16 @@
 * **可观测**:`tracing` 结构化日志(json/pretty)、Prometheus `/metrics`、`/healthz`;
 * **优雅停机**:SIGTERM → 停 accept → 广播房间关闭与维护通知 → 排空连接 → 关闭连接池。
 
+## 整体架构图
+
+**分层全景**:客户端与网络(TLS 1.3 长连接,可选 nginx 四层透传)→ Rust 后端五层(net-kit → gateway → protocol/router → application → domain,infrastructure 反向实现 domain 接口)→ 持久层(PostgreSQL 18 / Redis):
+
+![LongshipX 整体架构:客户端与网络、Rust 后端五层、持久层](assets/flow-1.png)
+
+**一次 TCP 命令的 16 步旅程**(①TLS 请求 → ④解码/鉴权 → ⑤路由 → ⑥调用用例 → ⑦依赖接口 → ⑧⑨读写数据库 → ⑩⑪构建响应 → ⑫序列化 → ⑬写入发送队列 → ⑯加密响应;理解这条链路,就知道每一步该编辑哪个 crate):
+
+![一次请求流经各层的 16 个步骤时序](assets/flow-2.png)
+
 ## Workspace 分层
 
 ```
@@ -52,52 +62,196 @@ cargo run -p longshipx-server-bin
 
 > 配置路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`)。
 
-## 示例 API:注册角色(HTTP)→ 获取角色信息(TCP+TLS protobuf)
+框架自带两个"已完成实现"作参照:HTTP 注册/登录(见 `crates/gateway/src/http/routes.rs`)与 TCP 获取档案命令(见 `crates/gateway/src/tcp/handlers.rs` 的 `handle_get_profile`);可运行客户端示例:`cargo run -p longshipx-server-bin --example quickstart_client -- --token <token> --root-ca "$(mkcert -CAROOT)/rootCA.pem"`。
 
-完整用户旅程分两段:**低频操作走 HTTP,高频玩法走 TCP 长连接**,两者共享同一套 application 用例与 token。
+---
 
-### 第 1 段:HTTP 注册角色并登录(拿到 opaque token)
+## 开发指南:亲手实现"注册角色(HTTP)"与"获取角色信息(TCP 命令)"
+
+以下按"**拿到一个空白 LongshipX 框架,我要自己把这两个接口做出来**"的视角,给出**逐文件编辑步骤**。每一步都回答三个问题:编辑哪个文件、写什么、为什么放这一层。
+
+### 任务 A:开发"注册角色"HTTP 接口
+
+> HTTP 侧低频 CRUD 走 axum。整个任务只涉及 6 个文件,顺序由依赖方向决定:**先定规则(domain),再定抽象与编排(application),最后接入口(gateway)与组装(server-bin)**。
+
+**第 1 步 — 定义业务规则:`crates/domain/src/account/aggregate.rs`**
+
+领域层是起点,零框架依赖。确认账号聚合有"注册"所需的一切规则(若要新增字段/校验,改这里):
+
+```rust
+// 注册工厂:uuid v7 主键、初始状态 Active;密码只收哈希,明文进不了领域层
+pub fn register(username: Username, password_hash: PasswordHash, now: DateTime<Utc>) -> Self
+```
+
+配套的值对象校验在 `crates/domain/src/shared/value.rs`(`Username::try_new` 长度/字符集、`PlainPassword::try_new` 8~128 字节),注册的所有输入规则都应写在这里并配单测。
+
+**第 2 步 — 声明仓储接口:`crates/domain/src/account/repository.rs`**
+
+用例需要"按用户名查重"和"保存",在领域层声明接口,不关心是谁实现:
+
+```rust
+#[async_trait::async_trait]
+pub trait AccountRepository: Send + Sync {
+    async fn find_by_username(&self, username: &str) -> Result<Option<Account>, RepoError>;
+    async fn save(&self, account: &Account) -> Result<(), RepoError>;
+}
+```
+
+**第 3 步 — 声明技术端口:`crates/application/src/ports.rs`**
+
+密码哈希是"外部能力",应用层只定义端口,argon2 实现由基础设施注入(将来换 bcrypt/云端 KDF,业务零改动——这就是名字里的"X"):
+
+```rust
+pub trait PasswordHasher: Send + Sync {
+    fn hash(&self, password: &str) -> Result<String, AppError>;
+    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError>;
+}
+```
+
+**第 4 步 — 定义入参出参:`crates/application/src/dto.rs`**
+
+```rust
+pub struct RegisterCommand { pub username: String, pub password: String, pub nickname: String }
+pub struct RegisterResult { pub account_id: AccountId, pub player_id: PlayerId, pub nickname: String }
+```
+
+**第 5 步 — 编排用例:`crates/application/src/auth/register.rs`**
+
+Command/Query 风格的用例结构体,依赖全部是 trait 对象(`Arc<dyn Trait>`),顺序:校验 → 查重 → 哈希 → 建聚合 → 落库 → 审计:
+
+```rust
+pub struct RegisterUseCase { accounts: Arc<dyn AccountRepository>, players: Arc<dyn PlayerRepository>,
+                             hasher: Arc<dyn PasswordHasher>, audit: Arc<dyn AuditLogger> }
+
+impl RegisterUseCase {
+    pub async fn execute(&self, cmd: RegisterCommand) -> Result<RegisterResult, AppError> {
+        let username = Username::try_new(&cmd.username)?;           // 1. 领域校验
+        if self.accounts.find_by_username(username.as_str()).await?.is_some() {
+            return Err(AppError::Conflict("用户名已被占用".into()));  // 2. 查重
+        }
+        let hash = PasswordHash::new(self.hasher.hash(&cmd.password)?); // 3. 哈希
+        let account = Account::register(username, hash, Utc::now());    // 4. 聚合
+        let player = Player::create(account.id(), nickname, Utc::now());
+        self.accounts.save(&account).await?;                            // 5. 落库
+        self.players.save(&player).await?;
+        Ok(RegisterResult { /* ... */ })                                // 6. 回执
+    }
+}
+```
+
+**第 6 步 — 暴露 HTTP 路由:`crates/gateway/src/http/routes.rs`**
+
+axum 处理器只做"JSON ⇄ Command/Result"翻译;错误到状态码的映射在 `crates/gateway/src/http/error.rs`(`ApiError::from(AppError)`),鉴权提取器在 `auth_extractor.rs`:
+
+```rust
+async fn register(State(state): State<Arc<HttpState>>, Json(req): Json<RegisterRequest>)
+    -> Result<(StatusCode, Json<RegisterResponse>), ApiError>
+{
+    let result = state.register.execute(RegisterCommand { /* req 映射 */ }).await?;
+    Ok((StatusCode::CREATED, Json(RegisterResponse::from(result))))
+}
+// router() 里挂载:.route("/register", post(register))
+```
+
+**第 7 步 — 组装注入:`crates/server-bin/src/bootstrap.rs`**
+
+洋葱架构在组装根闭合:把 infrastructure 的实现塞进用例。`build_services` 中:
+
+```rust
+let hasher = Arc::new(Argon2PasswordHasher::new(memory_kb, iterations, parallelism)?);
+let register = Arc::new(RegisterUseCase::new(accounts, players, hasher.clone(), audit));
+// HttpState { register, .. } → http::routes::router(state)
+```
+
+**第 8 步 — 验证**:`cargo run -p longshipx-server-bin` 后 `curl -XPOST localhost:8081/register -d '{...}'`;并补路由层测试(参考 `crates/gateway/tests/http.rs` 的 tower oneshot 写法)。
+
+### 任务 B:开发"获取角色信息"TCP 命令
+
+> TCP 侧走 protobuf 命令。核心是**协议五件套**(protocol crate)→ **用例**(application)→ **处理器与路由**(gateway)→ **端到端验证**。参考实现已内置:`git grep handle_get_profile`。
+
+**第 1 步 — 定义消息:`crates/protocol/proto/game.proto`**
+
+字段号一经发布禁止改作他用(PRD 8.2 🔴),新消息用新字段号并保持 optional:
+
+```protobuf
+message GetProfileRequest {}                     // 空入参
+message ProfileResponse {
+  bool ok = 1;
+  optional string player_id = 2;
+  optional string nickname = 3;
+  optional uint32 level = 4;
+  optional uint64 exp = 5;
+  optional int64 last_login_at_ms = 6;
+  optional string error = 7;
+}
+```
+
+**第 2 步 — 分配 opcode:`crates/protocol/src/opcodes.rs`**
+
+C2S 用 `0x0nxx` 段、S2C 用 `0x8nxx` 段:
+
+```rust
+pub const OP_C2S_GET_PROFILE: u16 = 0x0013;
+pub const OP_S2C_PROFILE: u16 = 0x8003;
+```
+
+**第 3 步 — 接入编解码:`crates/protocol/src/messages.rs`**
+
+四处 match 各加一个分支:`InboundMessage::GetProfile(...)` / `OutboundMessage::Profile(...)`,以及 `decode_inbound`、`encode_outbound`、`decode_outbound`。
+
+**第 4 步 — 客户端侧编解码:`crates/protocol/src/lib.rs`**
+
+`ClientCodec`(压测工具/测试客户端用)的 `encode` 加对应分支,把 `GetProfile` 编成 `OP_C2S_GET_PROFILE` 帧。
+
+**第 5 步 — (如需新用例)`crates/application/src/player/profile.rs`**
+
+本例是只读查询,直接复用已有 `GetPlayerProfile` 用例;新写法同样是一个结构体 + `execute`:
+
+```rust
+pub struct GetPlayerProfile { players: Arc<dyn PlayerRepository> }
+impl GetPlayerProfile {
+    pub async fn execute(&self, player_id: PlayerId) -> Result<PlayerProfile, AppError> { /* ... */ }
+}
+```
+
+**第 6 步 — 写处理器:`crates/gateway/src/tcp/handlers.rs`**
+
+鉴权门由连接主循环统一把关(未绑定只放行 Bind),处理器里只管业务;**要给处理器新能力时,加到 `crates/gateway/src/tcp/context.rs` 的 `GatewayDeps`**(本例即注入 `profile` 用例),并在 `server-bin/src/bootstrap.rs` 装配处补一行:
+
+```rust
+pub async fn handle_get_profile(ctx: ConnContext, message: InboundMessage)
+    -> Result<Option<OutboundMessage>, ProtocolError>
+{
+    let InboundMessage::GetProfile(_) = message else { /* 路由异构防御 */ };
+    let Some(player) = ctx.authed_player() else {
+        return Ok(Some(error_notification(ERR_NOT_AUTHENTICATED, "请先完成绑定")));
+    };
+    match ctx.deps.profile.execute(player.player_id).await {
+        Ok(profile) => Ok(Some(OutboundMessage::Profile(pb::ProfileResponse { ok: true, /* ... */ }))),
+        Err(err) => Ok(Some(app_error_notification(err))),
+    }
+}
+```
+
+**第 7 步 — 注册路由:`crates/gateway/src/tcp/router_setup.rs`**
+
+```rust
+router.route(OP_C2S_GET_PROFILE, handlers::handle_get_profile);
+```
+
+**第 8 步 — 端到端验证:`crates/gateway/tests/e2e.rs`**
+
+用 `ClientCodec` 走真实 TLS 加一段"绑定 → 发 GetProfile → 收 Profile"(参考该文件 `bind_heartbeat_and_room_flow_end_to_end`),然后:
 
 ```bash
-# 注册(201,返回 account_id / player_id)
-curl -s -XPOST localhost:8081/register \
-  -H 'content-type: application/json' \
-  -d '{"username":"quickstart","password":"super-secret","nickname":"快跑选手"}'
-
-# 登录(200,返回 token / expires_in_secs)
-curl -s -XPOST localhost:8081/login \
-  -H 'content-type: application/json' \
-  -d '{"username":"quickstart","password":"super-secret"}'
-# => {"token":"...64位hex...","player_id":"...","nickname":"快跑选手","expires_in_secs":604800}
+cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --workspace
 ```
 
-### 第 2 段:TCP+TLS 通道获取角色信息
+> 顺序为什么是这样?对照上面的 16 步旅程图:消息先过 **protocol**(第 1~4 步决定"线上长什么样"),再进 **application**(第 5 步决定"业务怎么算"),最后由 **gateway**(第 6~7 步)把两者接起来——依赖方向永远指向内层,这正是改不动 domain 的原因,也是换 MySQL/换传输只动外层的保证。
 
-建连后**第一条消息必须是 `Bind{token}`**(opcode `0x0001`),之后即可发 `GetProfile`(opcode `0x0013`)查询服务端权威档案。帧格式:
-
-```
-[4B 长度 u32 BE(= opcode+payload 字节数)][2B opcode][protobuf payload]
-GetProfile 空消息 → 实际帧:00 00 00 02 | 00 13
-```
-
-**可运行的完整客户端**(绑定 → 档案 → 进房 → 聊天)已内置,直接跑:
-
-```bash
-cargo run -p longshipx-server-bin --example quickstart_client -- \
-  --token <第1段登录拿到的token> --server 127.0.0.1:8080 \
-  --root-ca "$(mkcert -CAROOT)/rootCA.pem"
-# 输出示例:
-#   TLS 握手完成:127.0.0.1:8080
-#   BindResult ok=true player=Some("0198...")
-#   Profile: ok=true nickname=Some("快跑选手") level=Some(1) exp=Some(0) last_login=Some(...)
-#   房间事件:MemberJoined { ... }
-```
-
-核心代码即 `crates/server-bin/examples/quickstart_client.rs`:`ClientCodec` 负责消息 ⇄ 帧,`net_kit` 负责帧 ⇄ TLS 流,约 120 行完成全链路。其余 TCP 消息:`Heartbeat(0x0002)`、`JoinRoom(0x0010)`、`LeaveRoom(0x0011)`、`RoomChat(0x0012)`,全部 proto 定义见 `crates/protocol/proto/game.proto`。
+---
 
 ## 从哪些文件逐步开发(阅读路线图)
-
-按依赖方向**从内向外**读,每层都能独立理解、独立测试:
 
 | 顺序 | 文件/目录 | 你会看到什么 |
 | --- | --- | --- |
@@ -118,28 +272,18 @@ cargo run -p longshipx-server-bin --example quickstart_client -- \
 | 想做什么 | 改哪些文件 |
 | --- | --- |
 | 调端口/帧上限/心跳/背压队列等参数 | `.env`(模板见 `.public_env`)→ 默认值与校验在 `crates/infrastructure/src/config.rs` |
-| **新增一条 TCP 消息** | 见下方 8 步清单(真例:GetProfile) |
-| 新增 HTTP 接口 | `crates/gateway/src/http/routes.rs`(路由+DTO)→ 需要新用例时再加 `application` |
+| 新增 TCP 消息 | 上文"任务 B"的 8 步清单 |
+| 新增 HTTP 接口 | 上文"任务 A"的 6~7 步(路由 + 组装),用例复用 `application` |
 | 新增业务用例(登录类) | `crates/application/src/<域>/` 用例 + `dto.rs` + `ports.rs`(如需新端口)→ `gateway` 调用 |
 | 新增表/字段 | `migration/src/` 新迁移 → `infrastructure/persistence/entities/` → `converters.rs` → `repositories/` |
 | 新增领域规则 | 对应聚合 `crates/domain/src/<聚合>/aggregate.rs` + 内嵌单测 |
 | 新增领域事件 | `crates/domain/src/events.rs` 定义 → 发布方在 application → 分发实现在 `infrastructure/src/events.rs` |
 | 更换/新增传输(KCP/QUIC) | 实现 `crates/net-kit/src/transport.rs` 的 `Transport` trait,上层不动(PRD 3.4/8.1) |
+| 切换数据库(如 MySQL) | `infrastructure` 仓储实现 + `sea-orm` feature(`sqlx-mysql`)+ `.env` 连接串;domain/application 零改动 |
 | 调整限流/慢客户端策略 | `crates/gateway/src/tcp/rate_limit.rs`、`handler.rs` |
 | 调整优雅停机行为 | `crates/server-bin/src/bootstrap.rs`(`graceful_teardown`)+ `gateway/src/tcp/server.rs` |
 | 换 token/密码实现 | `infrastructure/src/cache/`、`password.rs`(实现 application 端口,业务层零改动) |
 | 加指标项 | 各处 `metrics::counter!/gauge!` 调用 + `server-bin/src/observability.rs` |
-
-### 示例:新增一条 TCP 消息(以刚落地的 `GetProfile` 为真例)
-
-1. **定义协议**:`crates/protocol/proto/game.proto` 加 `GetProfileRequest`/`ProfileResponse`(字段号新增不复用,PRD 8.2 🔴);
-2. **分配 opcode**:`crates/protocol/src/opcodes.rs`(C2S 用 `0x0013`,S2C 用 `0x8003`);
-3. **接入编解码**:`crates/protocol/src/messages.rs` —— `InboundMessage`/`OutboundMessage` 各加枚举分支,`decode_inbound`/`encode_outbound`/`decode_outbound` 各加 match 分支;
-4. **客户端侧编解码**:`crates/protocol/src/lib.rs` 的 `ClientCodec` 加对应分支;
-5. **(如需新用例)** 在 `crates/application/src/` 写用例;本例复用现成的 `GetPlayerProfile`;
-6. **处理器**:`crates/gateway/src/tcp/handlers.rs` 写 `handle_get_profile`(鉴权门已由连接主循环统一把关);
-7. **注册路由**:`crates/gateway/src/tcp/router_setup.rs`(单测同步更新 opcode 清单);
-8. **验证**:`crates/gateway/tests/e2e.rs` 加端到端步骤 → `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test --workspace`。
 
 ## 开发与测试
 
