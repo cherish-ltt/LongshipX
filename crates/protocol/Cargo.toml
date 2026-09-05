@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
 description = "游戏消息协议:protobuf 定义、prost 生成、帧编解码适配与消息路由表"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Ghyper9023/ppt-tcp"
+repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # protobuf 运行时(PRD 8.2:跨语言序列化方案)

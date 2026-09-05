@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
 description = "接口层:TCP+TLS 长连接入口、HTTP(axum)入口、鉴权/限流中间件与消息路由装配"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Ghyper9023/ppt-tcp"
+repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # 入站适配依赖:网络框架 + 协议 + 应用层(PRD 4.2,不直接依赖 domain)

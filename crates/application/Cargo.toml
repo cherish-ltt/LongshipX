@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
 description = "应用层:用例编排(Command/Query)、端口 trait、事务边界抽象与 Room Actor"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Ghyper9023/ppt-tcp"
+repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # 领域层(依赖方向只指向内层,PRD 4.1)

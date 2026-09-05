@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
 description = "基础设施层:SeaORM 仓储实现、Redis token 存储、argon2id 密码哈希与环境变量配置"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Ghyper9023/ppt-tcp"
+repository = "https://github.com/cherish-ltt/LongshipX"
 
 [dependencies]
 # 内层 crate(实现其定义的 trait,依赖倒置)

@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
 description = "组装根:依赖注入、配置加载、TLS 监听启动与优雅停机(唯一可执行文件)"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Ghyper9023/ppt-tcp"
+repository = "https://github.com/cherish-ltt/LongshipX"
 
 [[bin]]
 name = "longshipx-server"
