@@ -126,14 +126,14 @@ impl From<pb::BindResult> for OutboundMessage {
 mod tests {
     use super::*;
     use crate::GameCodec;
-    use ppt_tcp_net_kit::codec::Codec;
+    use longshipx_net_kit::codec::Codec;
 
     fn codec() -> GameCodec {
         GameCodec
     }
 
     /// 把入站消息按给定 opcode 编码为帧(模拟客户端)。
-    fn encode_inbound(message: &InboundMessage, opcode: u16) -> ppt_tcp_net_kit::codec::Frame {
+    fn encode_inbound(message: &InboundMessage, opcode: u16) -> longshipx_net_kit::codec::Frame {
         let payload = match message {
             InboundMessage::Bind(msg) => msg.encode_to_vec(),
             InboundMessage::Heartbeat(msg) => msg.encode_to_vec(),
@@ -143,7 +143,7 @@ mod tests {
             InboundMessage::GetProfile(_) => Vec::new(),
             InboundMessage::Unknown(_) => Vec::new(),
         };
-        ppt_tcp_net_kit::codec::Frame::new(opcode, payload)
+        longshipx_net_kit::codec::Frame::new(opcode, payload)
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
     fn unknown_opcode_yields_unknown_message() {
         let codec = codec();
         let decoded = codec
-            .decode(&ppt_tcp_net_kit::codec::Frame::new(0x7FFF, vec![]))
+            .decode(&longshipx_net_kit::codec::Frame::new(0x7FFF, vec![]))
             .unwrap();
         assert_eq!(decoded, InboundMessage::Unknown(0x7FFF));
         assert_eq!(decoded.opcode(), 0x7FFF);
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn corrupt_payload_is_decode_error() {
         let codec = codec();
-        let mut bad = ppt_tcp_net_kit::codec::Frame::new(OP_C2S_BIND, vec![0xFF, 0xFF, 0x01]);
+        let mut bad = longshipx_net_kit::codec::Frame::new(OP_C2S_BIND, vec![0xFF, 0xFF, 0x01]);
         assert!(codec.decode(&bad).is_err());
         bad.payload.clear();
         assert!(
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn outbound_roundtrip_covers_all_messages() {
-        use ppt_tcp_net_kit::codec::Codec as _;
+        use longshipx_net_kit::codec::Codec as _;
         let room_event = OutboundMessage::RoomEvent(pb::RoomEventNotification {
             event: Some(pb::room_event_notification::Event::MemberLeft(
                 pb::room_event_notification::MemberLeft {
@@ -242,7 +242,7 @@ mod tests {
             let (opcode, payload) = encode_outbound(&message).unwrap();
             assert!(opcode >= 0x8001);
             // 解码回来字段应可读(proto3 空 message 编码为空串,故用例均带字段)。
-            let frame = ppt_tcp_net_kit::codec::Frame::new(opcode, payload);
+            let frame = longshipx_net_kit::codec::Frame::new(opcode, payload);
             assert!(crate::ClientCodec.decode(&frame).is_ok());
         }
     }

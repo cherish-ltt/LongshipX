@@ -4,7 +4,7 @@ use crate::dto::PlayerProfile;
 use crate::error::AppError;
 use crate::ports::EventPublisher;
 use chrono::Utc;
-use ppt_tcp_domain::{DomainEvent, PlayerId, PlayerRepository};
+use longshipx_domain::{DomainEvent, PlayerId, PlayerRepository};
 use std::sync::Arc;
 
 pub struct GainExpUseCase {
@@ -50,7 +50,7 @@ mod tests {
     use crate::error::AppError;
     use crate::fakes::FakePlayers;
     use chrono::Utc;
-    use ppt_tcp_domain::{AccountId, Nickname, Player};
+    use longshipx_domain::{AccountId, Nickname, Player};
 
     struct CollectingEvents(std::sync::Mutex<Vec<DomainEvent>>);
 

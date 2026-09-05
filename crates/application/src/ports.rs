@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 use async_trait::async_trait;
-use ppt_tcp_domain::{DomainEvent, PlayerId};
+use longshipx_domain::{DomainEvent, PlayerId};
 use std::time::Duration;
 
 /// 会话令牌存储:不透明随机 token + 服务端存储,支持立即吊销(PRD 6.1/10)。

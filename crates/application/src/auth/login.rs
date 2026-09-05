@@ -3,8 +3,8 @@
 use crate::dto::{LoginCommand, LoginResult};
 use crate::error::AppError;
 use crate::ports::{AuditLogger, PasswordHasher, SessionTokenStore};
-use ppt_tcp_domain::shared::value::Username;
-use ppt_tcp_domain::{AccountRepository, PlayerRepository};
+use longshipx_domain::shared::value::Username;
+use longshipx_domain::{AccountRepository, PlayerRepository};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,7 +49,7 @@ impl LoginUseCase {
         })
     }
 
-    async fn load_account(&self, username: &str) -> Result<ppt_tcp_domain::Account, AppError> {
+    async fn load_account(&self, username: &str) -> Result<longshipx_domain::Account, AppError> {
         // 统一返回"用户名或密码错误",不暴露用户是否存在(PRD 第 10 章)。
         self.deps
             .accounts
@@ -58,7 +58,7 @@ impl LoginUseCase {
             .ok_or_else(|| AppError::Unauthorized("用户名或密码错误".into()))
     }
 
-    fn ensure_login_allowed(&self, account: &ppt_tcp_domain::Account) -> Result<(), AppError> {
+    fn ensure_login_allowed(&self, account: &longshipx_domain::Account) -> Result<(), AppError> {
         if account.status().allows_login(chrono::Utc::now()) {
             return Ok(());
         }
@@ -67,8 +67,8 @@ impl LoginUseCase {
 
     async fn load_player(
         &self,
-        account: ppt_tcp_domain::AccountId,
-    ) -> Result<ppt_tcp_domain::Player, AppError> {
+        account: longshipx_domain::AccountId,
+    ) -> Result<longshipx_domain::Player, AppError> {
         self.deps
             .players
             .find_by_account(account)
@@ -76,11 +76,11 @@ impl LoginUseCase {
             .ok_or_else(|| AppError::Internal("账号缺少对应的玩家档案".into()))
     }
 
-    async fn players_save(&self, player: &ppt_tcp_domain::Player) -> Result<(), AppError> {
+    async fn players_save(&self, player: &longshipx_domain::Player) -> Result<(), AppError> {
         Ok(self.deps.players.save(player).await?)
     }
 
-    async fn audit_login(&self, player: &ppt_tcp_domain::Player) {
+    async fn audit_login(&self, player: &longshipx_domain::Player) {
         if let Err(err) = self
             .deps
             .audit
@@ -105,7 +105,7 @@ pub struct LoginDependencies {
 mod tests {
     use super::*;
     use crate::fakes::{FakeAccounts, FakeAudit, FakeHasher, FakePlayers, FakeTokens};
-    use ppt_tcp_domain::{AccountStatus, PlayerId};
+    use longshipx_domain::{AccountStatus, PlayerId};
 
     fn deps_with(account_status: AccountStatus) -> (LoginUseCase, Arc<FakeTokens>) {
         let accounts = Arc::new(FakeAccounts::with_status("alice", account_status));

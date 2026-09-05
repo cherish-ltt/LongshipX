@@ -1,6 +1,6 @@
 //! 应用层统一错误:由网关映射为协议错误或 HTTP 状态码。
 
-use ppt_tcp_domain::{DomainError, RepoError};
+use longshipx_domain::{DomainError, RepoError};
 
 /// 用例执行错误。⚠️ 不携带密码/token 等敏感内容,可直接下发到客户端。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn maps_domain_and_repo_errors() {
         assert!(matches!(
-            AppError::from(DomainError::RoomFull(ppt_tcp_domain::RoomId(
+            AppError::from(DomainError::RoomFull(longshipx_domain::RoomId(
                 uuid::Uuid::now_v7()
             ))),
             AppError::Conflict(_)

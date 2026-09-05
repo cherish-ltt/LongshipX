@@ -5,16 +5,16 @@
 //! # 1. 先通过 HTTP 拿 token(见 README):
 //! #    curl -s -XPOST localhost:8081/login -d '{"username":"quickstart","password":"super-secret"}'
 //! # 2. 运行示例(--root-ca 传 mkcert 根证书,可用 `mkcert -CAROOT` 查询):
-//! cargo run -p ppt-tcp-server-bin --example quickstart_client -- \
+//! cargo run -p longshipx-server-bin --example quickstart_client -- \
 //!   --token <上一步的token> --server 127.0.0.1:8080 \
 //!   --root-ca "$(mkcert -CAROOT)/rootCA.pem"
 //! ```
 
-use ppt_tcp_net_kit::codec::{Codec as _, read_frame, write_frame};
-use ppt_tcp_protocol::generated::{
+use longshipx_net_kit::codec::{Codec as _, read_frame, write_frame};
+use longshipx_protocol::generated::{
     BindRequest, GetProfileRequest, JoinRoomRequest, RoomChatRequest,
 };
-use ppt_tcp_protocol::{ClientCodec, InboundMessage, OutboundMessage};
+use longshipx_protocol::{ClientCodec, InboundMessage, OutboundMessage};
 use rustls::pki_types::pem::PemObject;
 use std::sync::Arc;
 

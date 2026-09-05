@@ -6,7 +6,7 @@
 
 ## 1. Git 提交规范
 
-- **范围**：每次提交应独立且完整地对应一个逻辑变更（如单一功能点、缺陷修复或配置调整），禁止混合多个不相关改动；按功能批次顺序组织，单次提交代码变动量建议控制在 200 行以内(非强制限制 200 行以内)，避免大批量改动挤在同一条提交信息中。
+- **范围**：每次提交应独立且完整地对应一个逻辑变更（如单一功能点、缺陷修复或配置调整），禁止混合多个不相关改动；按功能批次顺序组织，单次提交代码变动量建议控制在 500 行以内(仅建议，非强制，可适当突破)，避免大批量改动挤在同一条提交信息中。
 - **格式**：`<type>: <中文描述>`
 - **常用 type**：
   - `feat` – 新功能
@@ -211,7 +211,7 @@ msrv = "1.95.0"
 ### 10.1 Workspace 布局与 crate 命名
 
 - 项目为 Cargo workspace(根 `Cargo.toml` 为 virtual manifest,`resolver = "3"`),成员见根 `Cargo.toml` 的 `members`。
-- crate 包名统一加 `ppt-tcp-` 前缀(如 `ppt-tcp-domain`),保证 crates.io 可发布;目录名保持 PRD 中的 `domain`/`application`/`net-kit`/`protocol`/`infrastructure`/`gateway`/`server-bin` 与 `migration`。
+- crate 包名统一加 `longshipx-` 前缀(如 `longshipx-domain`),保证 crates.io 可发布;目录名保持 PRD 中的 `domain`/`application`/`net-kit`/`protocol`/`infrastructure`/`gateway`/`server-bin` 与 `migration`。
 - 每个 crate 的 `Cargo.toml` 必须内联完整元数据(name/version/edition/rust-version/authors/description/license/repository),依赖逐条 `=锁定版本` 并按用途加 `#` 注释分组;不使用 workspace 依赖继承,保证每个 crate 可独立审阅。
 
 ### 10.2 分层红线(代码评审 checklist)

@@ -1,4 +1,8 @@
-# ppt-tcp
+# LongshipX
+
+> **Longship(长船)· Long-connection(长连接)· Long-lasting(长长久久)**
+
+**命名寓意**:Longship 是维京人的长船——木质龙骨历经风浪仍稳固耐航,寓意这套长连接游戏服务器**长长久久、稳定可靠**;"长船"与游戏服务器的立身之本"**长连接**"同名同源;"**X**"则是可自由组合的因子——接入 PostgreSQL、SeaORM、Redis,或将来切换 MySQL、更换传输协议,都只动出站适配器,业务核心分毫不变(得益于洋葱架构的端口 trait,见下文"从哪些文件逐步开发")。
 
 基于 **tokio + TCP/TLS 1.3** 的 Rust 长连接游戏服务器后端,采用 **DDD + 洋葱架构** 组织为 Cargo workspace 多 crate 单体(PRD:`prd.md`)。
 
@@ -43,7 +47,7 @@ mkcert -install
 mkcert -cert-file ~/certs/localhost.pem -key-file ~/certs/localhost-key.pem localhost 127.0.0.1
 
 # 3. 构建 & 启动(启动时自动执行 migration)
-cargo run -p ppt-tcp-server-bin
+cargo run -p longshipx-server-bin
 ```
 
 > 配置路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`)。
@@ -79,7 +83,7 @@ GetProfile 空消息 → 实际帧:00 00 00 02 | 00 13
 **可运行的完整客户端**(绑定 → 档案 → 进房 → 聊天)已内置,直接跑:
 
 ```bash
-cargo run -p ppt-tcp-server-bin --example quickstart_client -- \
+cargo run -p longshipx-server-bin --example quickstart_client -- \
   --token <第1段登录拿到的token> --server 127.0.0.1:8080 \
   --root-ca "$(mkcert -CAROOT)/rootCA.pem"
 # 输出示例:

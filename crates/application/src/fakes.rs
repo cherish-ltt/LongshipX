@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::ports::{AuditLogger, PasswordHasher, SessionTokenStore};
 use async_trait::async_trait;
 use chrono::Utc;
-use ppt_tcp_domain::{
+use longshipx_domain::{
     Account, AccountId, AccountRepository, AccountStatus, Nickname, PasswordHash, Player, PlayerId,
     PlayerRepository, RepoError, Username,
 };

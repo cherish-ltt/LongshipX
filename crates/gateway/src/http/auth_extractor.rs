@@ -4,7 +4,7 @@ use crate::http::error::ApiError;
 use crate::http::state::HttpState;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use ppt_tcp_domain::PlayerId;
+use longshipx_domain::PlayerId;
 use std::sync::Arc;
 
 /// 从 `Authorization: Bearer <token>` 解析出的已鉴权玩家。

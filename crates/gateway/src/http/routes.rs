@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use ppt_tcp_application::dto::{LoginCommand, RegisterCommand};
+use longshipx_application::dto::{LoginCommand, RegisterCommand};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;

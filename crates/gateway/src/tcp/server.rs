@@ -3,7 +3,7 @@
 use crate::tcp::config::TcpGatewayConfig;
 use crate::tcp::context::GatewayDeps;
 use crate::tcp::handler;
-use ppt_tcp_net_kit::{TcpTlsTransport, TlsAcceptor, accept_loop};
+use longshipx_net_kit::{TcpTlsTransport, TlsAcceptor, accept_loop};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -43,7 +43,7 @@ impl TcpGateway {
     pub async fn run(&self, shutdown: watch::Receiver<bool>) {
         let deps = self.deps.clone();
         let config = self.config;
-        let handler = move |stream: ppt_tcp_net_kit::TlsTcpStream, peer: std::net::SocketAddr| {
+        let handler = move |stream: longshipx_net_kit::TlsTcpStream, peer: std::net::SocketAddr| {
             let deps = deps.clone();
             async move {
                 handler::handle_connection(stream, peer, deps, config).await;
@@ -64,8 +64,8 @@ impl TcpGateway {
     pub fn broadcast_shutdown(&self, message: &str) -> usize {
         self.deps.connections.broadcast(
             self.deps.codec.as_ref(),
-            &ppt_tcp_protocol::OutboundMessage::Shutdown(
-                ppt_tcp_protocol::generated::ServerShutdownNotice {
+            &longshipx_protocol::OutboundMessage::Shutdown(
+                longshipx_protocol::generated::ServerShutdownNotice {
                     message: message.to_string(),
                 },
             ),

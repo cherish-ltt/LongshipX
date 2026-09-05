@@ -3,8 +3,8 @@
 use crate::dto::{RegisterCommand, RegisterResult};
 use crate::error::AppError;
 use crate::ports::{AuditLogger, PasswordHasher};
-use ppt_tcp_domain::shared::value::{Nickname, PasswordHash, PlainPassword, Username};
-use ppt_tcp_domain::{Account, AccountRepository, Player, PlayerRepository, RepoError};
+use longshipx_domain::shared::value::{Nickname, PasswordHash, PlainPassword, Username};
+use longshipx_domain::{Account, AccountRepository, Player, PlayerRepository, RepoError};
 use std::sync::Arc;
 
 pub struct RegisterUseCase {

@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use ppt_tcp_application::error::AppError;
+use longshipx_application::error::AppError;
 use serde::Serialize;
 
 #[derive(Debug)]

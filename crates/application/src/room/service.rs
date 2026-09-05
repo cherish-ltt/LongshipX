@@ -5,7 +5,7 @@ use crate::error::AppError;
 use crate::ports::EventPublisher;
 use crate::room::actor::{MAX_CHAT_CHARS, RoomActor, RoomCommand, RoomEvent, RoomHandle};
 use chrono::Utc;
-use ppt_tcp_domain::{DomainEvent, PlayerId, Room, RoomId};
+use longshipx_domain::{DomainEvent, PlayerId, Room, RoomId};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};

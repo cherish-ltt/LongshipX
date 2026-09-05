@@ -2,12 +2,12 @@
 
 use crate::tcp::auth_gate::AuthGate;
 use crate::tcp::connections::ConnectionRegistry;
+use longshipx_application::ports::SessionTokenStore;
+use longshipx_application::{GetPlayerProfile, RoomService};
+use longshipx_domain::{PlayerId, PlayerRepository};
+use longshipx_net_kit::OutboundSender;
+use longshipx_protocol::Router;
 use parking_lot::Mutex;
-use ppt_tcp_application::ports::SessionTokenStore;
-use ppt_tcp_application::{GetPlayerProfile, RoomService};
-use ppt_tcp_domain::{PlayerId, PlayerRepository};
-use ppt_tcp_net_kit::OutboundSender;
-use ppt_tcp_protocol::Router;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -24,16 +24,16 @@ pub struct AuthedPlayer {
 pub struct AuthState {
     pub player: Option<AuthedPlayer>,
     /// 本连接当前所在房间(一条连接同时只在一个房间,PRD Room/Scene 语义)。
-    pub current_room: Option<ppt_tcp_domain::RoomId>,
+    pub current_room: Option<longshipx_domain::RoomId>,
 }
 
 /// 网关共享依赖(全连接复用)。
 pub struct GatewayDeps {
     pub codec: Arc<
-        dyn ppt_tcp_net_kit::codec::Codec<
-                In = ppt_tcp_protocol::InboundMessage,
-                Out = ppt_tcp_protocol::OutboundMessage,
-                Error = ppt_tcp_protocol::ProtocolError,
+        dyn longshipx_net_kit::codec::Codec<
+                In = longshipx_protocol::InboundMessage,
+                Out = longshipx_protocol::OutboundMessage,
+                Error = longshipx_protocol::ProtocolError,
             >,
     >,
     pub router: Router<ConnContext>,
@@ -52,7 +52,7 @@ pub struct ConnContext {
     pub peer_ip: IpAddr,
     pub outbound: OutboundSender,
     /// 本连接的房间事件入口(加入房间时作为成员 sink 交给 Actor)。
-    pub room_tx: mpsc::Sender<ppt_tcp_application::RoomEvent>,
+    pub room_tx: mpsc::Sender<longshipx_application::RoomEvent>,
     pub auth: Arc<Mutex<AuthState>>,
     pub deps: Arc<GatewayDeps>,
 }
@@ -70,22 +70,22 @@ impl ConnContext {
         self.auth.lock().player = Some(player);
     }
 
-    pub fn current_room(&self) -> Option<ppt_tcp_domain::RoomId> {
+    pub fn current_room(&self) -> Option<longshipx_domain::RoomId> {
         self.auth.lock().current_room
     }
 
-    pub fn set_current_room(&self, room_id: Option<ppt_tcp_domain::RoomId>) {
+    pub fn set_current_room(&self, room_id: Option<longshipx_domain::RoomId>) {
         self.auth.lock().current_room = room_id;
     }
 
     /// 尽力投递一条出站消息;队列满返回 Err(调用方应断开,PRD 8.5)。
     pub fn try_send(
         &self,
-        message: ppt_tcp_protocol::OutboundMessage,
-    ) -> Result<(), ppt_tcp_protocol::ProtocolError> {
+        message: longshipx_protocol::OutboundMessage,
+    ) -> Result<(), longshipx_protocol::ProtocolError> {
         let frame = self.deps.codec.encode(&message)?;
         self.outbound
             .try_send_frame(frame)
-            .map_err(|err| ppt_tcp_protocol::ProtocolError::Handler(err.to_string()))
+            .map_err(|err| longshipx_protocol::ProtocolError::Handler(err.to_string()))
     }
 }

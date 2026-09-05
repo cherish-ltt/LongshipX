@@ -1,22 +1,22 @@
 //! 启动装配(PRD 4.2 composition root):加载配置 → 依赖注入 → 启动监听 → 优雅停机。
 
 use crate::{observability, shutdown};
-use ppt_tcp_application::auth::LoginDependencies;
-use ppt_tcp_application::ports::SessionTokenStore;
-use ppt_tcp_application::{
+use longshipx_application::auth::LoginDependencies;
+use longshipx_application::ports::SessionTokenStore;
+use longshipx_application::{
     GetPlayerProfile, LoginUseCase, RegisterUseCase, RoomService, RoomServiceConfig,
 };
-use ppt_tcp_gateway::http::HttpState;
-use ppt_tcp_gateway::tcp::config::{RateLimitSettings, TcpGatewayConfig};
-use ppt_tcp_gateway::tcp::router_setup::build_router;
-use ppt_tcp_gateway::tcp::{AuthGate, ConnectionRegistry, GatewayDeps, TcpGateway};
-use ppt_tcp_infrastructure::cache::{InMemoryTokenStore, RedisTokenStore};
-use ppt_tcp_infrastructure::config::{Config, DatabaseConfig, TlsConfig};
-use ppt_tcp_infrastructure::password::Argon2PasswordHasher;
-use ppt_tcp_infrastructure::persistence::repositories::{
+use longshipx_gateway::http::HttpState;
+use longshipx_gateway::tcp::config::{RateLimitSettings, TcpGatewayConfig};
+use longshipx_gateway::tcp::router_setup::build_router;
+use longshipx_gateway::tcp::{AuthGate, ConnectionRegistry, GatewayDeps, TcpGateway};
+use longshipx_infrastructure::cache::{InMemoryTokenStore, RedisTokenStore};
+use longshipx_infrastructure::config::{Config, DatabaseConfig, TlsConfig};
+use longshipx_infrastructure::password::Argon2PasswordHasher;
+use longshipx_infrastructure::persistence::repositories::{
     SeaAccountRepository, SeaAuditLogger, SeaPlayerRepository,
 };
-use ppt_tcp_protocol::GameCodec;
+use longshipx_protocol::GameCodec;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -30,7 +30,7 @@ struct Services {
     profile: Arc<GetPlayerProfile>,
     rooms: Arc<RoomService>,
     tokens: Arc<dyn SessionTokenStore>,
-    players: Arc<dyn ppt_tcp_domain::PlayerRepository>,
+    players: Arc<dyn longshipx_domain::PlayerRepository>,
 }
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
@@ -45,7 +45,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     tokio::spawn(observability::serve_metrics(metrics_addr, recorder));
 
     let db = connect_database(&config.database).await?;
-    ppt_tcp_migration::run_migrations(&db).await?;
+    longshipx_migration::run_migrations(&db).await?;
     tracing::info!("数据库迁移已就绪");
 
     let tokens = connect_token_store(&config).await?;
@@ -114,9 +114,7 @@ fn build_services(
         iterations,
         parallelism,
     )?);
-    let publisher = Arc::new(ppt_tcp_infrastructure::events::InMemoryEventPublisher::new(
-        256,
-    ));
+    let publisher = Arc::new(longshipx_infrastructure::events::InMemoryEventPublisher::new(256));
     let rooms = Arc::new(RoomService::new(
         RoomServiceConfig {
             command_capacity: config.network.channel_per_room,
@@ -166,7 +164,7 @@ async fn start_tcp_gateway(
         bind_addr,
         max_frame_size: config.network.max_frame_size,
         send_queue_capacity: config.network.channel_per_conn,
-        room_event_capacity: ppt_tcp_application::room::ROOM_EVENT_CAPACITY,
+        room_event_capacity: longshipx_application::room::ROOM_EVENT_CAPACITY,
         unauth_timeout: Duration::from_secs(config.network.unauth_timeout_secs),
         heartbeat_timeout: Duration::from_secs(config.network.heartbeat_timeout_secs),
         rate: RateLimitSettings {
@@ -197,8 +195,8 @@ async fn start_tcp_gateway(
     Ok(gateway)
 }
 
-fn build_tls_acceptor(tls: &TlsConfig) -> Result<ppt_tcp_net_kit::TlsAcceptor, Box<dyn Error>> {
-    let acceptor = ppt_tcp_net_kit::tls::server_acceptor_from_files(
+fn build_tls_acceptor(tls: &TlsConfig) -> Result<longshipx_net_kit::TlsAcceptor, Box<dyn Error>> {
+    let acceptor = longshipx_net_kit::tls::server_acceptor_from_files(
         Path::new(&tls.cert_path),
         Path::new(&tls.key_path),
     )?;
@@ -222,7 +220,7 @@ async fn start_http_server(
         profile: services.profile.clone(),
         tokens: services.tokens.clone(),
     });
-    let app = ppt_tcp_gateway::http::routes::router(state);
+    let app = longshipx_gateway::http::routes::router(state);
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "HTTP 网关开始监听");

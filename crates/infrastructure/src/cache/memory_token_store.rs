@@ -2,9 +2,9 @@
 //! ⚠️ 重启即失效,不满足跨重启存活的强需求时务必使用 Redis 实现。
 
 use async_trait::async_trait;
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_application::ports::SessionTokenStore;
-use ppt_tcp_domain::PlayerId;
+use longshipx_application::error::AppError;
+use longshipx_application::ports::SessionTokenStore;
+use longshipx_domain::PlayerId;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

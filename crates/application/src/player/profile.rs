@@ -2,7 +2,7 @@
 
 use crate::dto::PlayerProfile;
 use crate::error::AppError;
-use ppt_tcp_domain::{PlayerId, PlayerRepository};
+use longshipx_domain::{PlayerId, PlayerRepository};
 use std::sync::Arc;
 
 pub struct GetPlayerProfile {
@@ -30,13 +30,13 @@ mod tests {
     use crate::error::AppError;
     use crate::fakes::FakePlayers;
     use chrono::Utc;
-    use ppt_tcp_domain::{Nickname, Player};
+    use longshipx_domain::{Nickname, Player};
 
     #[tokio::test]
     async fn returns_profile_for_existing_player() {
         let players = FakePlayers::default();
         let player = Player::create(
-            ppt_tcp_domain::AccountId(uuid::Uuid::now_v7()),
+            longshipx_domain::AccountId(uuid::Uuid::now_v7()),
             Nickname::try_new("阿宽").unwrap(),
             Utc::now(),
         );

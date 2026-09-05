@@ -1,17 +1,17 @@
 //! 端到端测试(PRD 14 "Gateway/端到端"):真实 TCP+TLS 客户端连接网关,
 //! 验证协议编解码、鉴权流程、房间广播、心跳与优雅停机。
 
-use ppt_tcp_application::ports::SessionTokenStore as _;
-use ppt_tcp_application::{RoomService, RoomServiceConfig};
-use ppt_tcp_gateway::tcp::config::{RateLimitSettings, TcpGatewayConfig};
-use ppt_tcp_gateway::tcp::router_setup::build_router;
-use ppt_tcp_gateway::tcp::{AuthGate, ConnectionRegistry, GatewayDeps, TcpGateway};
-use ppt_tcp_infrastructure::cache::InMemoryTokenStore;
-use ppt_tcp_infrastructure::events::InMemoryEventPublisher;
-use ppt_tcp_infrastructure::persistence::repositories::InMemoryPlayerRepository;
-use ppt_tcp_net_kit::codec::{Codec as _, read_frame, write_frame};
-use ppt_tcp_protocol::generated as pb;
-use ppt_tcp_protocol::{ClientCodec, GameCodec, InboundMessage, OutboundMessage};
+use longshipx_application::ports::SessionTokenStore as _;
+use longshipx_application::{RoomService, RoomServiceConfig};
+use longshipx_gateway::tcp::config::{RateLimitSettings, TcpGatewayConfig};
+use longshipx_gateway::tcp::router_setup::build_router;
+use longshipx_gateway::tcp::{AuthGate, ConnectionRegistry, GatewayDeps, TcpGateway};
+use longshipx_infrastructure::cache::InMemoryTokenStore;
+use longshipx_infrastructure::events::InMemoryEventPublisher;
+use longshipx_infrastructure::persistence::repositories::InMemoryPlayerRepository;
+use longshipx_net_kit::codec::{Codec as _, read_frame, write_frame};
+use longshipx_protocol::generated as pb;
+use longshipx_protocol::{ClientCodec, GameCodec, InboundMessage, OutboundMessage};
 use rustls::pki_types::pem::PemObject;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,7 +55,8 @@ async fn spawn_server() -> TestServer {
 
 async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
     let certs = test_certs();
-    let acceptor = ppt_tcp_net_kit::tls::server_acceptor_from_pem_bytes(certs.0, certs.1).unwrap();
+    let acceptor =
+        longshipx_net_kit::tls::server_acceptor_from_pem_bytes(certs.0, certs.1).unwrap();
     let tokens = Arc::new(InMemoryTokenStore::new());
     let players = Arc::new(InMemoryPlayerRepository::new());
     let publisher = Arc::new(InMemoryEventPublisher::new(64));
@@ -71,7 +72,9 @@ async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
         router: build_router(),
         tokens: tokens.clone(),
         players: players.clone(),
-        profile: Arc::new(ppt_tcp_application::GetPlayerProfile::new(players.clone())),
+        profile: Arc::new(longshipx_application::GetPlayerProfile::new(
+            players.clone(),
+        )),
         rooms,
         auth_gate: Arc::new(AuthGate::new(8)),
         connections: Arc::new(ConnectionRegistry::new()),
@@ -288,7 +291,7 @@ async fn message_before_bind_is_rejected_and_connection_closed() {
     let OutboundMessage::Error(err) = reply else {
         panic!("应收到 ErrorNotification");
     };
-    assert_eq!(err.code, ppt_tcp_protocol::ERR_AUTH_REQUIRED_FIRST);
+    assert_eq!(err.code, longshipx_protocol::ERR_AUTH_REQUIRED_FIRST);
     // 服务端随后关闭连接。
     let closed = tokio::time::timeout(Duration::from_secs(2), client.reader.read_u8()).await;
     assert!(matches!(closed, Ok(Err(_)) | Err(_)));
@@ -335,7 +338,7 @@ async fn unauthenticated_connection_times_out() {
     let OutboundMessage::Error(err) = reply else {
         panic!("应收到 ErrorNotification");
     };
-    assert_eq!(err.code, ppt_tcp_protocol::ERR_TIMEOUT);
+    assert_eq!(err.code, longshipx_protocol::ERR_TIMEOUT);
     server.shutdown_tx.send_replace(true);
 }
 
@@ -358,7 +361,7 @@ async fn rate_limit_exceeded_disconnects() {
         loop {
             match client.recv().await {
                 Some(OutboundMessage::Error(err))
-                    if err.code == ppt_tcp_protocol::ERR_RATE_LIMITED =>
+                    if err.code == longshipx_protocol::ERR_RATE_LIMITED =>
                 {
                     return true;
                 },

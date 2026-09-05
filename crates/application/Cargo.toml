@@ -1,16 +1,16 @@
 [package]
-name = "ppt-tcp-application"
+name = "longshipx-application"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
-authors = ["The ppt-tcp Contributors"]
+authors = ["The LongshipX Contributors"]
 description = "应用层:用例编排(Command/Query)、端口 trait、事务边界抽象与 Room Actor"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"
 
 [dependencies]
 # 领域层(依赖方向只指向内层,PRD 4.1)
-ppt-tcp-domain = { path = "../domain", version = "=0.1.0" }
+longshipx-domain = { path = "../domain", version = "=0.1.0" }
 # 异步端口 trait
 async-trait = "=0.1.92"
 # 错误定义

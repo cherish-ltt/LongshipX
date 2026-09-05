@@ -1856,6 +1856,133 @@ dependencies = [
 ]
 
 [[package]]
+name = "longshipx-application"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "longshipx-domain",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "longshipx-domain"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "longshipx-gateway"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "http-body-util",
+ "longshipx-application",
+ "longshipx-domain",
+ "longshipx-infrastructure",
+ "longshipx-net-kit",
+ "longshipx-protocol",
+ "metrics",
+ "parking_lot",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "longshipx-infrastructure"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "async-trait",
+ "chrono",
+ "getrandom 0.4.3",
+ "longshipx-application",
+ "longshipx-domain",
+ "redis",
+ "sea-orm",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "longshipx-migration"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sea-orm-migration",
+]
+
+[[package]]
+name = "longshipx-net-kit"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "rcgen",
+ "rustls",
+ "socket2",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "longshipx-protocol"
+version = "0.1.0"
+dependencies = [
+ "longshipx-net-kit",
+ "prost",
+ "prost-build",
+ "protox",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "longshipx-server-bin"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "dotenvy",
+ "longshipx-application",
+ "longshipx-domain",
+ "longshipx-gateway",
+ "longshipx-infrastructure",
+ "longshipx-migration",
+ "longshipx-net-kit",
+ "longshipx-protocol",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "rustls",
+ "sea-orm",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "loom"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2294,133 +2421,6 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
-
-[[package]]
-name = "ppt-tcp-application"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "ppt-tcp-domain",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ppt-tcp-domain"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "ppt-tcp-gateway"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "http-body-util",
- "metrics",
- "parking_lot",
- "ppt-tcp-application",
- "ppt-tcp-domain",
- "ppt-tcp-infrastructure",
- "ppt-tcp-net-kit",
- "ppt-tcp-protocol",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ppt-tcp-infrastructure"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "async-trait",
- "chrono",
- "getrandom 0.4.3",
- "ppt-tcp-application",
- "ppt-tcp-domain",
- "redis",
- "sea-orm",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ppt-tcp-migration"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "sea-orm-migration",
-]
-
-[[package]]
-name = "ppt-tcp-net-kit"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "rcgen",
- "rustls",
- "socket2",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tracing",
-]
-
-[[package]]
-name = "ppt-tcp-protocol"
-version = "0.1.0"
-dependencies = [
- "ppt-tcp-net-kit",
- "prost",
- "prost-build",
- "protox",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "ppt-tcp-server-bin"
-version = "0.1.0"
-dependencies = [
- "axum",
- "dotenvy",
- "metrics",
- "metrics-exporter-prometheus",
- "ppt-tcp-application",
- "ppt-tcp-domain",
- "ppt-tcp-gateway",
- "ppt-tcp-infrastructure",
- "ppt-tcp-migration",
- "ppt-tcp-net-kit",
- "ppt-tcp-protocol",
- "rustls",
- "sea-orm",
- "tokio",
- "tokio-rustls",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "ppv-lite86"

@@ -1,9 +1,9 @@
 //! 领域/应用事件 → 协议消息的适配(PRD 4.1:接口层负责翻译)。
 
-use ppt_tcp_application::RoomEvent;
-use ppt_tcp_domain::RoomId;
-use ppt_tcp_protocol::generated::RoomEventNotification;
-use ppt_tcp_protocol::generated::room_event_notification as pb_event;
+use longshipx_application::RoomEvent;
+use longshipx_domain::RoomId;
+use longshipx_protocol::generated::RoomEventNotification;
+use longshipx_protocol::generated::room_event_notification as pb_event;
 
 fn room_id_str(id: RoomId) -> String {
     id.0.to_string()
@@ -53,8 +53,8 @@ pub fn room_event_to_notification(event: RoomEvent) -> RoomEventNotification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ppt_tcp_domain::PlayerId;
-    use ppt_tcp_protocol::generated::room_event_notification::Event;
+    use longshipx_domain::PlayerId;
+    use longshipx_protocol::generated::room_event_notification::Event;
 
     #[test]
     fn every_room_event_maps_to_proto_oneof() {

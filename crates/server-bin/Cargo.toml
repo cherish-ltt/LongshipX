@@ -1,26 +1,26 @@
 [package]
-name = "ppt-tcp-server-bin"
+name = "longshipx-server-bin"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
-authors = ["The ppt-tcp Contributors"]
+authors = ["The LongshipX Contributors"]
 description = "组装根:依赖注入、配置加载、TLS 监听启动与优雅停机(唯一可执行文件)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"
 
 [[bin]]
-name = "ppt-tcp-server"
+name = "longshipx-server"
 path = "src/main.rs"
 
 [dependencies]
 # 组装全部分层(PRD 4.2 composition root)
-ppt-tcp-domain = { path = "../domain", version = "=0.1.0" }
-ppt-tcp-application = { path = "../application", version = "=0.1.0" }
-ppt-tcp-net-kit = { path = "../net-kit", version = "=0.1.0" }
-ppt-tcp-protocol = { path = "../protocol", version = "=0.1.0" }
-ppt-tcp-infrastructure = { path = "../infrastructure", version = "=0.1.0" }
-ppt-tcp-gateway = { path = "../gateway", version = "=0.1.0" }
-ppt-tcp-migration = { path = "../../migration", version = "=0.1.0" }
+longshipx-domain = { path = "../domain", version = "=0.1.0" }
+longshipx-application = { path = "../application", version = "=0.1.0" }
+longshipx-net-kit = { path = "../net-kit", version = "=0.1.0" }
+longshipx-protocol = { path = "../protocol", version = "=0.1.0" }
+longshipx-infrastructure = { path = "../infrastructure", version = "=0.1.0" }
+longshipx-gateway = { path = "../gateway", version = "=0.1.0" }
+longshipx-migration = { path = "../../migration", version = "=0.1.0" }
 # 异步运行时(多线程,PRD 9.4)
 tokio = { version = "=1.53.1", features = ["full"] }
 # 数据库连接池参数构造(与 infrastructure 同版本)

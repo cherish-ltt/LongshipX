@@ -1,19 +1,19 @@
 [package]
-name = "ppt-tcp-gateway"
+name = "longshipx-gateway"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
-authors = ["The ppt-tcp Contributors"]
+authors = ["The LongshipX Contributors"]
 description = "接口层:TCP+TLS 长连接入口、HTTP(axum)入口、鉴权/限流中间件与消息路由装配"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"
 
 [dependencies]
 # 入站适配依赖:网络框架 + 协议 + 应用层(PRD 4.2,不直接依赖 domain)
-ppt-tcp-net-kit = { path = "../net-kit", version = "=0.1.0" }
-ppt-tcp-protocol = { path = "../protocol", version = "=0.1.0" }
-ppt-tcp-application = { path = "../application", version = "=0.1.0" }
-ppt-tcp-domain = { path = "../domain", version = "=0.1.0" }
+longshipx-net-kit = { path = "../net-kit", version = "=0.1.0" }
+longshipx-protocol = { path = "../protocol", version = "=0.1.0" }
+longshipx-application = { path = "../application", version = "=0.1.0" }
+longshipx-domain = { path = "../domain", version = "=0.1.0" }
 # 异步运行时
 tokio = { version = "=1.53.1", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
 # HTTP 入口(PRD 8.3:登录/注册等低频操作)
@@ -46,4 +46,4 @@ tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
 # 测试中实现端口 trait
 async-trait = "=0.1.92"
 # 端到端测试用内存版基础设施(仅测试依赖,不进入生产装配)
-ppt-tcp-infrastructure = { path = "../infrastructure", version = "=0.1.0" }
+longshipx-infrastructure = { path = "../infrastructure", version = "=0.1.0" }

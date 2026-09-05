@@ -2,7 +2,7 @@
 //! 这里提供内存快照实现,预留未来跨进程/持久化的替换点。
 
 use async_trait::async_trait;
-use ppt_tcp_domain::{RepoError, Room, RoomId, RoomRepository};
+use longshipx_domain::{RepoError, Room, RoomId, RoomRepository};
 use std::collections::HashMap;
 use std::sync::Mutex;
 

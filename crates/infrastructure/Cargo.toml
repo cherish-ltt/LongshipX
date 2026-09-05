@@ -1,17 +1,17 @@
 [package]
-name = "ppt-tcp-infrastructure"
+name = "longshipx-infrastructure"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
-authors = ["The ppt-tcp Contributors"]
+authors = ["The LongshipX Contributors"]
 description = "基础设施层:SeaORM 仓储实现、Redis token 存储、argon2id 密码哈希与环境变量配置"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"
 
 [dependencies]
 # 内层 crate(实现其定义的 trait,依赖倒置)
-ppt-tcp-domain = { path = "../domain", version = "=0.1.0" }
-ppt-tcp-application = { path = "../application", version = "=0.1.0" }
+longshipx-domain = { path = "../domain", version = "=0.1.0" }
+longshipx-application = { path = "../application", version = "=0.1.0" }
 # PostgreSQL + SeaORM 2.0 稳定版(PRD 7.2 二编:2.0 已 GA,优先使用)
 sea-orm = { version = "=2.0.2", features = [
     "sqlx-postgres",

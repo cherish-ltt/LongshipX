@@ -3,8 +3,8 @@
 use argon2::password_hash::phc::PasswordHash as PhcHash;
 use argon2::password_hash::{PasswordHasher as _, PasswordVerifier as _};
 use argon2::{Algorithm, Argon2, Params, Version};
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_application::ports::PasswordHasher;
+use longshipx_application::error::AppError;
+use longshipx_application::ports::PasswordHasher;
 
 /// argon2id 哈希器:实例持有固定参数(哈希串自带参数,verify 按串内参数重算)。
 pub struct Argon2PasswordHasher {
@@ -49,7 +49,7 @@ impl PasswordHasher for Argon2PasswordHasher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ppt_tcp_application::ports::PasswordHasher;
+    use longshipx_application::ports::PasswordHasher;
 
     /// 测试用低开销参数(默认 19MB 内存在单测中过慢)。
     fn hasher() -> Argon2PasswordHasher {

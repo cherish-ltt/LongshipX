@@ -70,5 +70,5 @@ impl net_kit_codec::Codec for ClientCodec {
 
 /// net-kit 类型别名(避免在文档与本 crate 中重复全路径)。
 pub(crate) mod net_kit_codec {
-    pub use ppt_tcp_net_kit::codec::{Codec, Frame};
+    pub use longshipx_net_kit::codec::{Codec, Frame};
 }

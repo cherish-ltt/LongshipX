@@ -2,9 +2,9 @@
 //! 未来替换为 NATS/Kafka 时 domain/application 不用改一行。
 
 use async_trait::async_trait;
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_application::ports::EventPublisher;
-use ppt_tcp_domain::DomainEvent;
+use longshipx_application::error::AppError;
+use longshipx_application::ports::EventPublisher;
+use longshipx_domain::DomainEvent;
 use tokio::sync::broadcast;
 
 /// 进程内事件总线:无订阅者时静默丢弃(事件是旁路观察点)。
@@ -40,7 +40,7 @@ impl EventPublisher for InMemoryEventPublisher {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use ppt_tcp_domain::{PlayerId, RoomId};
+    use longshipx_domain::{PlayerId, RoomId};
 
     fn leveled_up(level: u32) -> DomainEvent {
         DomainEvent::PlayerLeveledUp {

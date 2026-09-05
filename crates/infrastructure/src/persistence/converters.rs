@@ -2,8 +2,8 @@
 
 use crate::persistence::entities::{account as account_entity, player as player_entity};
 use chrono::{DateTime, Utc};
-use ppt_tcp_domain::shared::value::{Nickname, PasswordHash, Username};
-use ppt_tcp_domain::{Account, AccountId, AccountStatus, Player, PlayerId, RepoError};
+use longshipx_domain::shared::value::{Nickname, PasswordHash, Username};
+use longshipx_domain::{Account, AccountId, AccountStatus, Player, PlayerId, RepoError};
 
 /// 账号状态 ↔ 状态码(0/1/2,见 migration)。
 pub fn status_from_code(code: i16) -> Result<AccountStatus, RepoError> {
@@ -73,7 +73,7 @@ pub fn player_to_domain(model: &player_entity::Model) -> Result<Player, RepoErro
         .map_err(|err| RepoError::Storage(format!("玩家数据不符合领域规则: {err}")))?;
     Ok(Player::reconstitute(
         PlayerId(model.id),
-        ppt_tcp_domain::AccountId(model.account_id),
+        longshipx_domain::AccountId(model.account_id),
         nickname,
         u32::try_from(model.level.max(0)).unwrap_or(0),
         u64::try_from(model.exp.max(0)).unwrap_or(0),
@@ -100,7 +100,7 @@ pub fn player_to_active(player: &Player) -> player_entity::ActiveModel {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use ppt_tcp_domain::Nickname;
+    use longshipx_domain::Nickname;
 
     fn account() -> Account {
         let name = Username::try_new("carol").unwrap();

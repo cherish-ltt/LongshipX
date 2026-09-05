@@ -1,9 +1,9 @@
 [package]
-name = "ppt-tcp-domain"
+name = "longshipx-domain"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
-authors = ["The ppt-tcp Contributors"]
+authors = ["The LongshipX Contributors"]
 description = "领域层:业务实体、值对象、聚合根、领域事件与仓储接口(零技术栈依赖)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"

@@ -1,9 +1,9 @@
 [package]
-name = "ppt-tcp-net-kit"
+name = "longshipx-net-kit"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
-authors = ["The ppt-tcp Contributors"]
+authors = ["The LongshipX Contributors"]
 description = "通用网络框架:TCP+TLS 传输、长度前缀帧编解码、读写分离与有界背压(零业务依赖)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"

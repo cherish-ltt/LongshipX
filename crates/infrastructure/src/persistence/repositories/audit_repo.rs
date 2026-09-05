@@ -3,9 +3,9 @@
 use crate::persistence::entities::audit_log::ActiveModel;
 use async_trait::async_trait;
 use chrono::Utc;
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_application::ports::AuditLogger;
-use ppt_tcp_domain::PlayerId;
+use longshipx_application::error::AppError;
+use longshipx_application::ports::AuditLogger;
+use longshipx_domain::PlayerId;
 use sea_orm::{ActiveModelTrait, DatabaseConnection};
 use std::sync::Arc;
 

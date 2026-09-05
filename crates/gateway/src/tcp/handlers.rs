@@ -3,14 +3,14 @@
 use crate::tcp::context::{AuthedPlayer, ConnContext};
 use crate::tcp::convert::room_event_to_notification;
 use chrono::Utc;
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_domain::RoomId;
-use ppt_tcp_protocol::InboundMessage;
-use ppt_tcp_protocol::error::ProtocolError;
-use ppt_tcp_protocol::generated as pb;
-use ppt_tcp_protocol::generated::RoomEventNotification;
-use ppt_tcp_protocol::messages::{OutboundMessage, bind_ok, bind_rejected, error_notification};
-use ppt_tcp_protocol::opcodes::*;
+use longshipx_application::error::AppError;
+use longshipx_domain::RoomId;
+use longshipx_protocol::InboundMessage;
+use longshipx_protocol::error::ProtocolError;
+use longshipx_protocol::generated as pb;
+use longshipx_protocol::generated::RoomEventNotification;
+use longshipx_protocol::messages::{OutboundMessage, bind_ok, bind_rejected, error_notification};
+use longshipx_protocol::opcodes::*;
 use uuid::Uuid;
 
 /// C2S_BIND:建连后的第一条消息,携带 opaque token 完成鉴权(PRD 8.3)。
@@ -34,7 +34,7 @@ pub async fn handle_bind(
     let player_id = match ctx.deps.tokens.resolve(token).await {
         Ok(Some(player_id)) => player_id,
         Ok(None) => {
-            metrics::counter!("ppt_tcp_bind_rejected_total").increment(1);
+            metrics::counter!("longshipx_bind_rejected_total").increment(1);
             return Ok(Some(bind_rejected("token 无效或已过期")));
         },
         Err(err) => return Err(ProtocolError::Handler(err.to_string())),
@@ -54,7 +54,7 @@ pub async fn handle_bind(
     });
     // 鉴权完成,退出未鉴权名额计数。
     ctx.deps.auth_gate.release(ctx.peer_ip);
-    metrics::counter!("ppt_tcp_bind_total").increment(1);
+    metrics::counter!("longshipx_bind_total").increment(1);
     tracing::info!(conn = %ctx.conn_id, player = %player_id, "连接绑定成功");
     Ok(Some(bind_ok(&player_id.0.to_string(), &nickname)))
 }
@@ -245,7 +245,7 @@ fn parse_optional_room_id(raw: Option<&str>) -> Result<Option<RoomId>, String> {
 }
 
 /// 由 `RoomEvent` 生成广播通知(供房间事件翻译 task 复用)。
-pub fn room_event_message(event: ppt_tcp_application::RoomEvent) -> OutboundMessage {
+pub fn room_event_message(event: longshipx_application::RoomEvent) -> OutboundMessage {
     let notification: RoomEventNotification = room_event_to_notification(event);
     OutboundMessage::RoomEvent(notification)
 }

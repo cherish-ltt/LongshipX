@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use ppt_tcp_domain::shared::value::Nickname;
-use ppt_tcp_domain::{
+use longshipx_domain::shared::value::Nickname;
+use longshipx_domain::{
     Account, AccountId, AccountRepository, Player, PlayerId, PlayerRepository, RepoError,
 };
 use std::collections::HashMap;
@@ -65,7 +65,7 @@ impl InMemoryPlayerRepository {
     /// 造一个测试玩家并注册进仓储。
     pub fn seed(&self, nickname: &str) -> Player {
         let player = Player::create(
-            ppt_tcp_domain::AccountId(uuid::Uuid::now_v7()),
+            longshipx_domain::AccountId(uuid::Uuid::now_v7()),
             Nickname::try_new(nickname).expect("测试昵称应合法"),
             Utc::now(),
         );
@@ -110,7 +110,7 @@ impl PlayerRepository for InMemoryPlayerRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ppt_tcp_domain::shared::value::{PasswordHash, Username};
+    use longshipx_domain::shared::value::{PasswordHash, Username};
 
     #[tokio::test]
     async fn account_and_player_roundtrip() {

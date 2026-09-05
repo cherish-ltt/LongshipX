@@ -6,7 +6,7 @@
 //!   需要应答的命令(join)通过 oneshot 把结果返回调用方。
 
 use crate::error::AppError;
-use ppt_tcp_domain::{PlayerId, Room, RoomId};
+use longshipx_domain::{PlayerId, Room, RoomId};
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot, watch};
 

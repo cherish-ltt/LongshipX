@@ -1,4 +1,4 @@
-//! ppt-tcp 服务器组装根:唯一的可执行文件(PRD 4.2)。
+//! LongshipX 服务器组装根:唯一的可执行文件(PRD 4.2)。
 
 mod bootstrap;
 mod observability;

@@ -1,7 +1,7 @@
 //! 用例的输入输出 DTO:网关与用例之间的稳定契约,不暴露领域聚合内部结构。
 
 use chrono::{DateTime, Utc};
-use ppt_tcp_domain::{AccountId, Player, PlayerId, RoomId};
+use longshipx_domain::{AccountId, Player, PlayerId, RoomId};
 
 /// 注册输入(明文密码仅在此短暂存在,交给 PasswordHasher)。
 pub struct RegisterCommand {

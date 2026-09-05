@@ -1,7 +1,7 @@
 //! HTTP 层共享状态。
 
-use ppt_tcp_application::ports::SessionTokenStore;
-use ppt_tcp_application::{GetPlayerProfile, LoginUseCase, RegisterUseCase};
+use longshipx_application::ports::SessionTokenStore;
+use longshipx_application::{GetPlayerProfile, LoginUseCase, RegisterUseCase};
 use std::sync::Arc;
 
 #[derive(Clone)]

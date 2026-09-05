@@ -3,7 +3,7 @@
 use crate::persistence::converters::{player_to_active, player_to_domain};
 use crate::persistence::entities::player::{ActiveModel, Column, Entity as Players};
 use async_trait::async_trait;
-use ppt_tcp_domain::{AccountId, Player, PlayerId, PlayerRepository, RepoError};
+use longshipx_domain::{AccountId, Player, PlayerId, PlayerRepository, RepoError};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 

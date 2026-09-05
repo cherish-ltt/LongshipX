@@ -1,9 +1,9 @@
 //! 在线连接注册表:优雅停机时用于广播维护通知(PRD 13.2)。
 
+use longshipx_net_kit::OutboundSender;
+use longshipx_net_kit::codec::Codec;
+use longshipx_protocol::{OutboundMessage, ProtocolError};
 use parking_lot::Mutex;
-use ppt_tcp_net_kit::OutboundSender;
-use ppt_tcp_net_kit::codec::Codec;
-use ppt_tcp_protocol::{OutboundMessage, ProtocolError};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -33,7 +33,7 @@ impl ConnectionRegistry {
     pub fn broadcast(
         &self,
         codec: &dyn Codec<
-            In = ppt_tcp_protocol::InboundMessage,
+            In = longshipx_protocol::InboundMessage,
             Out = OutboundMessage,
             Error = ProtocolError,
         >,
@@ -54,14 +54,14 @@ impl ConnectionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ppt_tcp_net_kit::codec::Frame;
-    use ppt_tcp_protocol::GameCodec;
-    use ppt_tcp_protocol::generated::HeartbeatAck;
+    use longshipx_net_kit::codec::Frame;
+    use longshipx_protocol::GameCodec;
+    use longshipx_protocol::generated::HeartbeatAck;
 
     struct EchoCodec;
 
     impl Codec for EchoCodec {
-        type In = ppt_tcp_protocol::InboundMessage;
+        type In = longshipx_protocol::InboundMessage;
         type Out = OutboundMessage;
         type Error = ProtocolError;
 

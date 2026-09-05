@@ -5,13 +5,13 @@ use crate::tcp::context::{ConnContext, GatewayDeps};
 use crate::tcp::convert::room_event_to_notification;
 use crate::tcp::handlers::app_error_notification;
 use crate::tcp::rate_limit::TokenBucket;
-use ppt_tcp_application::RoomEvent;
-use ppt_tcp_domain::Session;
-use ppt_tcp_net_kit::ConnectionConfig;
-use ppt_tcp_net_kit::{FrameReader, TlsTcpStream, split_connection};
-use ppt_tcp_protocol::OutboundMessage;
-use ppt_tcp_protocol::messages::error_notification;
-use ppt_tcp_protocol::opcodes::*;
+use longshipx_application::RoomEvent;
+use longshipx_domain::Session;
+use longshipx_net_kit::ConnectionConfig;
+use longshipx_net_kit::{FrameReader, TlsTcpStream, split_connection};
+use longshipx_protocol::OutboundMessage;
+use longshipx_protocol::messages::error_notification;
+use longshipx_protocol::opcodes::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -24,12 +24,12 @@ pub async fn handle_connection(
     config: TcpGatewayConfig,
 ) {
     let conn_id = uuid::Uuid::now_v7();
-    metrics::gauge!("ppt_tcp_connections_active").increment(1.0);
+    metrics::gauge!("longshipx_connections_active").increment(1.0);
 
     // 🔴 未鉴权连接按 IP 限量(PRD 8.3):超限直接关闭,连帧都不读。
     let holding_unauth_slot = deps.auth_gate.acquire(peer.ip());
     if !holding_unauth_slot {
-        metrics::counter!("ppt_tcp_unauth_rejected_total").increment(1);
+        metrics::counter!("longshipx_unauth_rejected_total").increment(1);
         tracing::warn!(%peer, "未鉴权连接超过单 IP 上限,拒绝");
         return;
     }
@@ -77,7 +77,7 @@ pub async fn handle_connection(
     translator.abort();
     drop(outbound);
     let _ = writer.await;
-    metrics::gauge!("ppt_tcp_connections_active").decrement(1.0);
+    metrics::gauge!("longshipx_connections_active").decrement(1.0);
     tracing::debug!(conn = %conn_id, %peer, "连接结束");
 }
 
@@ -110,7 +110,7 @@ async fn run_read_loop(
                     if err.is_disconnect() {
                         tracing::debug!(conn = %ctx.conn_id, error = %err, "对端断开");
                     } else {
-                        let code = if matches!(err, ppt_tcp_net_kit::NetError::FrameTooLarge { .. }) {
+                        let code = if matches!(err, longshipx_net_kit::NetError::FrameTooLarge { .. }) {
                             ERR_FRAME_TOO_LARGE
                         } else {
                             ERR_PROTOCOL
@@ -134,12 +134,12 @@ async fn run_read_loop(
 async fn admit_frame(
     ctx: &ConnContext,
     bucket: Option<&mut TokenBucket>,
-    frame: ppt_tcp_net_kit::Frame,
+    frame: longshipx_net_kit::Frame,
 ) -> bool {
     if let Some(bucket) = bucket
         && !bucket.try_acquire(std::time::Instant::now())
     {
-        metrics::counter!("ppt_tcp_rate_limited_total").increment(1);
+        metrics::counter!("longshipx_rate_limited_total").increment(1);
         let _ = ctx.try_send(error_notification(ERR_RATE_LIMITED, "请求过于频繁"));
         return false;
     }
@@ -172,7 +172,7 @@ async fn admit_frame(
         Err(err) => {
             tracing::warn!(conn = %ctx.conn_id, error = %err, "处理器错误");
             ctx.try_send(app_error_notification(
-                ppt_tcp_application::AppError::Internal(err.to_string()),
+                longshipx_application::AppError::Internal(err.to_string()),
             ))
             .is_ok()
         },
@@ -182,12 +182,12 @@ async fn admit_frame(
 /// 房间事件翻译:Actor 广播 → 协议帧;发送队列满即断开该连接。
 async fn room_event_translator(
     mut rx: mpsc::Receiver<RoomEvent>,
-    outbound: ppt_tcp_net_kit::OutboundSender,
+    outbound: longshipx_net_kit::OutboundSender,
     codec: Arc<
-        dyn ppt_tcp_net_kit::codec::Codec<
-                In = ppt_tcp_protocol::InboundMessage,
+        dyn longshipx_net_kit::codec::Codec<
+                In = longshipx_protocol::InboundMessage,
                 Out = OutboundMessage,
-                Error = ppt_tcp_protocol::ProtocolError,
+                Error = longshipx_protocol::ProtocolError,
             >,
     >,
 ) {

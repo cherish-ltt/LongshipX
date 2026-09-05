@@ -2,9 +2,9 @@
 //! 支持跨重启存活与立即吊销。
 
 use async_trait::async_trait;
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_application::ports::SessionTokenStore;
-use ppt_tcp_domain::PlayerId;
+use longshipx_application::error::AppError;
+use longshipx_application::ports::SessionTokenStore;
+use longshipx_domain::PlayerId;
 use redis::AsyncCommands;
 use redis::aio::MultiplexedConnection;
 use std::time::Duration;
@@ -105,7 +105,7 @@ fn random_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ppt_tcp_domain::PlayerId;
+    use longshipx_domain::PlayerId;
 
     #[test]
     fn keys_are_prefixed_and_scoped() {

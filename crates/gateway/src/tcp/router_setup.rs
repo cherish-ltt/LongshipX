@@ -2,8 +2,8 @@
 
 use crate::tcp::context::ConnContext;
 use crate::tcp::handlers;
-use ppt_tcp_protocol::Router;
-use ppt_tcp_protocol::opcodes::*;
+use longshipx_protocol::Router;
+use longshipx_protocol::opcodes::*;
 
 pub fn build_router() -> Router<ConnContext> {
     let mut router = Router::new();

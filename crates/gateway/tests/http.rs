@@ -3,14 +3,14 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
-use ppt_tcp_application::auth::LoginDependencies;
-use ppt_tcp_application::error::AppError;
-use ppt_tcp_application::ports::{AuditLogger, PasswordHasher, SessionTokenStore};
-use ppt_tcp_application::{GetPlayerProfile, LoginUseCase, RegisterUseCase};
-use ppt_tcp_gateway::http::routes::router;
-use ppt_tcp_gateway::http::state::HttpState;
-use ppt_tcp_infrastructure::cache::InMemoryTokenStore;
-use ppt_tcp_infrastructure::persistence::repositories::{
+use longshipx_application::auth::LoginDependencies;
+use longshipx_application::error::AppError;
+use longshipx_application::ports::{AuditLogger, PasswordHasher, SessionTokenStore};
+use longshipx_application::{GetPlayerProfile, LoginUseCase, RegisterUseCase};
+use longshipx_gateway::http::routes::router;
+use longshipx_gateway::http::state::HttpState;
+use longshipx_infrastructure::cache::InMemoryTokenStore;
+use longshipx_infrastructure::persistence::repositories::{
     InMemoryAccountRepository, InMemoryPlayerRepository,
 };
 use serde_json::json;
@@ -37,7 +37,7 @@ struct NullAudit;
 impl AuditLogger for NullAudit {
     async fn record(
         &self,
-        _player_id: Option<ppt_tcp_domain::PlayerId>,
+        _player_id: Option<longshipx_domain::PlayerId>,
         _action: &str,
         _detail: String,
     ) -> Result<(), AppError> {
