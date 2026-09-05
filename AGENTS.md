@@ -207,10 +207,46 @@ msrv = "1.95.0"
 
 ## 10. 其他追加内容
 
-### 10.1 追加内容xxx
+### 10.1 Workspace 布局与 crate 命名
 
-### 10.2 追加内容xxx
+- 项目为 Cargo workspace(根 `Cargo.toml` 为 virtual manifest,`resolver = "3"`),成员见根 `Cargo.toml` 的 `members`。
+- crate 包名统一加 `ppt-tcp-` 前缀(如 `ppt-tcp-domain`),保证 crates.io 可发布;目录名保持 PRD 中的 `domain`/`application`/`net-kit`/`protocol`/`infrastructure`/`gateway`/`server-bin` 与 `migration`。
+- 每个 crate 的 `Cargo.toml` 必须内联完整元数据(name/version/edition/rust-version/authors/description/license/repository),依赖逐条 `=锁定版本` 并按用途加 `#` 注释分组;不使用 workspace 依赖继承,保证每个 crate 可独立审阅。
 
-...
+### 10.2 分层红线(代码评审 checklist)
 
-```
+- `domain`:仅允许 `uuid`、`chrono`、`thiserror`、`serde`(标记)、`async-trait`(仓储接口,PRD 5.2 明确使用);禁止 tokio/sea_orm/redis/prost。
+- `application`:业务依赖只通过端口 trait(`ports.rs`)声明,实现注入一律 `Arc<dyn Trait>`(PRD 6.1 允许);Room Actor 是应用层组件,允许 tokio 原语。
+- `gateway`:不直接调用 domain 业务逻辑,只消费 application 用例与 DTO;domain 类型仅作为数据载体出现。
+- `infrastructure`:SeaORM 实体/Redis 类型不得泄漏出本层,Model ⇄ 领域聚合必须显式转换(`persistence/converters.rs`)。
+- 模块文件名避免与父模块同名(clippy `module_inception`),聚合实现放 `aggregate.rs`。
+
+### 10.3 配置管理
+
+- 全部可调参数经环境变量注入,默认值集中在 `crates/infrastructure/src/config.rs`(与 PRD 第 18 章一一对应);模板见 `.public_env`,真实 `.env` 已被 `.gitignore` 排除。
+- 配置解析通过 `Config::from_lookup` 注入读取器(edition 2024 下避免 `unsafe set_var`),新增配置项必须同步:config 结构体 + 默认值 + `.public_env` + 单测。
+
+### 10.4 测试与覆盖率
+
+- 单元测试必须可离线运行(不依赖 PG/Redis/容器);SeaORM/Redis 具体实现仅编译验证,真实库集成测试另行规划。
+- 端到端测试(`crates/gateway/tests/e2e.rs`、`tests/http.rs`)使用 rcgen 自签证书走真实 TLS,是协议/鉴权/房间链路的验收基线,改协议或网关后必须先跑。
+- 覆盖率命令:`cargo llvm-cov --workspace --summary-only`;当前基线:全仓行覆盖 ≈ 88%,核心 crate(domain/application/protocol/net-kit/gateway-http)≈ 83%–100%,SeaORM 仓储与 server-bin 启动序列为 0%(需真实服务)。不得使核心 crate 覆盖率显著回落。
+- 覆盖率工具链:`cargo-llvm-cov` + `rustup component add llvm-tools-preview`。
+
+### 10.5 网络层约定(net-kit)
+
+- 帧格式 `[4B len u32 BE][2B opcode][payload]`,长度前缀必须校验上限(`SERVER_MAX_FRAME_SIZE`);写 task 每次 `write_all` 后必须 `flush`(TLS/缓冲流语义,已修复过一次漏 flush 导致数据滞留的缺陷)。
+- 发送队列必须有界且队列满即断开(PRD 8.5 策略);新增传输(KCP/QUIC)只实现 `Transport` trait,不改上层。
+- 测试中涉及双工流的数据流向:`split(io)` 的写半部数据流向**对端**读半部,写测试时先画方向图,避免再次出现"读错半边"的死锁式用例。
+
+### 10.6 协议演进(protocol)
+
+- `.proto` 位于 `crates/protocol/proto/`,构建期由 protox(纯 Rust,无需 protoc)编译 + prost 生成;字段号一经发布禁止改作他用,新增字段一律新字段号且保持可选(PRD 8.2 🔴)。
+- 新增消息必须:定义 proto → `messages.rs` 增加入/出站枚举分支与 `opcodes.rs` 常量 → gateway 注册路由 → 端到端测试补用例。
+
+### 10.7 环境备注
+
+- 本仓库开发机 `~/.cargo/config.toml` 使用 rsproxy 镜像与 sccache;`rustc-wrapper` 必须写**绝对路径**(`~` 不展开会导致所有构建失败,已修复)。
+- 长时间运行的测试命令建议带超时包装执行,防止缺陷导致的挂死阻塞会话。
+
+
