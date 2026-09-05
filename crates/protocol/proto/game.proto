@@ -1,0 +1,93 @@
+// ppt-tcp 游戏消息协议(PRD 8.2)。
+//
+// 🔴 协议演进规则:字段号一经发布禁止改作他用;新增字段一律使用新字段号
+//    并保持 optional/可选语义,保证新老客户端混跑期解析兼容。
+syntax = "proto3";
+
+package game;
+
+// ───────────────────────── C2S(客户端 → 服务端) ─────────────────────────
+
+// 建连后的第一条消息:携带 HTTP 登录获得的 opaque token 完成绑定(PRD 8.3)。
+message BindRequest {
+  string token = 1;
+}
+
+// 心跳:客户端按 SERVER_HEARTBEAT_INTERVAL_SECS 间隔发送。
+message HeartbeatPing {
+  int64 client_ts_ms = 1;
+}
+
+// 加入房间:room_id 为空表示创建新房间并以自己为首名成员。
+message JoinRoomRequest {
+  optional string room_id = 1;
+}
+
+// 离开当前所在房间(会话内房间)。
+message LeaveRoomRequest {
+  optional string room_id = 1;
+}
+
+// 房间聊天(示例玩法通道)。
+message RoomChatRequest {
+  string text = 1;
+}
+
+// ───────────────────────── S2C(服务端 → 客户端) ─────────────────────────
+
+// 绑定结果。
+message BindResult {
+  bool ok = 1;
+  optional string player_id = 2;
+  optional string nickname = 3;
+  optional string error = 4;
+}
+
+// 心跳应答(携带服务器时间,便于客户端估算时钟偏差)。
+message HeartbeatAck {
+  int64 server_ts_ms = 1;
+}
+
+// 通用错误通知。
+message ErrorNotification {
+  uint32 code = 1;
+  string message = 2;
+}
+
+// 优雅停机广播(PRD 13.2)。
+message ServerShutdownNotice {
+  string message = 1;
+}
+
+// 房间事件广播。
+message RoomEventNotification {
+  oneof event {
+    MemberJoined member_joined = 1;
+    MemberLeft member_left = 2;
+    RoomChat chat = 3;
+    RoomClosed room_closed = 4;
+  }
+
+  message MemberJoined {
+    string room_id = 1;
+    string player_id = 2;
+    string nickname = 3;
+  }
+
+  message MemberLeft {
+    string room_id = 1;
+    string player_id = 2;
+  }
+
+  message RoomChat {
+    string room_id = 1;
+    string sender_id = 2;
+    string sender_nickname = 3;
+    string text = 4;
+  }
+
+  message RoomClosed {
+    string room_id = 1;
+    string reason = 2;
+  }
+}
