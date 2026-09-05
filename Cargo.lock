@@ -2414,8 +2414,10 @@ dependencies = [
  "ppt-tcp-migration",
  "ppt-tcp-net-kit",
  "ppt-tcp-protocol",
+ "rustls",
  "sea-orm",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
 ]
