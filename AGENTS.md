@@ -35,8 +35,26 @@ name: Rust CI
 on:
   push:
     branches: [ "main", "master" ]
+    paths:
+      - "**.rs"
+      - "**.proto"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".rustfmt.toml"
+      - ".clippy.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-ci.yml"
   pull_request:
     branches: [ "main", "master" ]
+    paths:
+      - "**.rs"
+      - "**.proto"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".rustfmt.toml"
+      - ".clippy.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-ci.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,7 +70,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.95"
+          toolchain: "1.98.1"
           components: rustfmt, clippy
 
       - name: Show rustup info
@@ -251,3 +269,9 @@ msrv = "1.95.0"
 - 长时间运行的测试命令建议带超时包装执行,防止缺陷导致的挂死阻塞会话。
 
 
+
+### 10.8 CI 触发过滤(paths 过滤器)
+
+- `.github/workflows/rust-ci.yml` 使用 GitHub Actions 原生 `paths` 白名单:仅当 **`.rs`、`.proto`、`Cargo.toml`、`Cargo.lock`、rustfmt/clippy 配置、workflow 文件自身** 变更时才执行;纯文档/配置模板提交(`*.md`、`docs/**`、`.public_env` 等)自动跳过,不占用 runner 时长。
+- ⚠️ 向白名单**新增会参与构建的文件类型时必须同步该列表**(如新增 `build.rs` 读取的外部资源、`rust-toolchain.toml` 已预置);宁可多触发,不可漏触发。
+- 白名单语义是"漏改即漏检",若希望改为"仅文档变更跳过"的黑名单语义(`paths-ignore`),需评审后统一调整第 2 节与本节。
