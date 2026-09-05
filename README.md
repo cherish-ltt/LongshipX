@@ -22,17 +22,9 @@
 
 ## 整体架构图
 
-**分层全景**:客户端与网络(TLS 1.3 长连接,可选 nginx 四层透传)→ Rust 后端五层(net-kit → gateway → protocol/router → application → domain,infrastructure 反向实现 domain 接口)→ 持久层(PostgreSQL 18 / Redis):
+**单条命令的完整管线**:客户端(TCP+TLS 长连接 / HTTP)→ net-kit → gateway 防线 → protocol/router → application → **domain 内核** ← infrastructure;右侧为错误通道与依赖注入(bootstrap.rs),左侧为加密响应回路。理解这条链路,就知道开发时的每一步该编辑哪个 crate:
 
-![LongshipX 整体架构:客户端与网络、Rust 后端五层、持久层](docs/assets/flow-1.png)
-
-**一次 TCP 命令的 16 步旅程**(①TLS 请求 → ④解码/鉴权 → ⑤路由 → ⑥调用用例 → ⑦依赖接口 → ⑧⑨读写数据库 → ⑩⑪构建响应 → ⑫序列化 → ⑬写入发送队列 → ⑯加密响应;理解这条链路,就知道每一步该编辑哪个 crate):
-
-![一次请求流经各层的 16 个步骤时序](docs/assets/flow-2.png)
-
-**单条命令的完整管线**(防线 → 用例 → 内核 → 出站背压,含错误通道与依赖注入):
-
-![单条命令处理管线:错误通道与依赖注入](docs/assets/flow-3.png)
+![LongshipX 请求处理流程:单条命令的完整管线](docs/assets/flow-3.png)
 
 ## Workspace 分层
 
