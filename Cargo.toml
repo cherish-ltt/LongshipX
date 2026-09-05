@@ -1,22 +1,20 @@
-[package]
-name = "ppt-tcp"
+[workspace]
+resolver = "3"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/net-kit",
+    "crates/protocol",
+    "crates/infrastructure",
+    "crates/gateway",
+    "crates/server-bin",
+    "migration",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
 authors = ["The ppt-tcp Contributors"]
-description = "基于 tokio 的 Rust 长连接游戏服务器后端（DDD + 洋葱架构）"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Ghyper9023/ppt-tcp"
-
-# 核心依赖
-[dependencies]
-
-# 开发依赖
-[dev-dependencies]
-
-# 编译优化配置
-[profile.dev]
-opt-level = 1
-
-[profile.dev.package."*"]
-opt-level = 3

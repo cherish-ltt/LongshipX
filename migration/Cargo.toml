@@ -1,0 +1,17 @@
+[package]
+name = "ppt-tcp-migration"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["The ppt-tcp Contributors"]
+description = "SeaORM 数据库迁移:accounts / players / audit_logs(PRD 7.3/7.4)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ghyper9023/ppt-tcp"
+
+[dependencies]
+sea-orm-migration = { version = "=2.0.2", features = [
+    "runtime-tokio-rustls",
+    "sqlx-postgres",
+] }
+# MigrationTrait 异步接口
+async-trait = "=0.1.92"

@@ -1,0 +1,30 @@
+[package]
+name = "ppt-tcp-net-kit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["The ppt-tcp Contributors"]
+description = "通用网络框架:TCP+TLS 传输、长度前缀帧编解码、读写分离与有界背压(零业务依赖)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ghyper9023/ppt-tcp"
+
+[dependencies]
+# 异步运行时与网络 IO
+tokio = { version = "=1.53.1", features = ["net", "io-util", "rt", "sync", "time", "macros"] }
+# TLS 1.3(rustls 纯 Rust 实现,PRD 第 3 章)
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+# TCP backlog / keepalive 细粒度控制
+socket2 = "=0.6.5"
+# 异步 trait(Transport)
+async-trait = "=0.1.92"
+# 错误定义
+thiserror = "=2.0.20"
+# 日志
+tracing = "=0.1.44"
+
+[dev-dependencies]
+# 异步单测
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
+# 测试用自签证书生成
+rcgen = "=0.14.10"

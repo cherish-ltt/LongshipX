@@ -1,0 +1,140 @@
+# ============================================================
+# ppt-tcp Rust 游戏服务器 环境变量配置模板
+# 用法:复制为 .env(已被 .gitignore 排除),修改所需值;
+#       未设置项将使用 crates/infrastructure/src/config.rs 中的默认值。
+# 🔴 DATABASE_URL / REDIS_URL / TLS 私钥等敏感信息生产必须覆盖,禁止硬编码。
+# ============================================================
+
+# -------------------- 网络层 --------------------
+# TCP+TLS 监听地址(IP:端口)
+SERVER_TCP_BIND_ADDR=0.0.0.0:8080
+
+# HTTP (axum) 监听地址(登录/注册等 REST API)
+SERVER_HTTP_BIND_ADDR=0.0.0.0:8081
+
+# WSS 监听地址(预留,本版本未启用)
+SERVER_WSS_BIND_ADDR=0.0.0.0:8082
+
+# 最大同时在线连接数(超出拒绝)
+SERVER_MAX_CONNECTIONS=10000
+
+# TCP listen backlog
+SERVER_CONNECTION_BACKLOG=1024
+
+# 读/写缓冲区初始大小(字节)
+SERVER_TCP_READ_BUFFER_SIZE=16384
+SERVER_TCP_WRITE_BUFFER_SIZE=16384
+
+# 每个连接发送队列容量(有界,防止内存溢出,PRD 8.5)
+SERVER_CHANNEL_PER_CONN_SIZE=256
+
+# 每个 Room 命令队列容量
+SERVER_CHANNEL_PER_ROOM_SIZE=512
+
+# 单条消息最大长度(字节),防恶意大包(PRD 8.2)
+SERVER_MAX_FRAME_SIZE=65536
+
+# 心跳间隔(秒)
+SERVER_HEARTBEAT_INTERVAL_SECS=20
+
+# 心跳超时(秒,必须 ≥ 2 倍间隔)
+SERVER_HEARTBEAT_TIMEOUT_SECS=60
+
+# 未鉴权连接超时(秒)
+SERVER_UNAUTH_TIMEOUT_SECS=10
+
+# 同 IP 未鉴权连接数上限
+SERVER_UNAUTH_MAX_PER_IP=5
+
+# 启用 TCP_NODELAY(禁用 Nagle)
+SERVER_TCP_NODELAY=true
+
+# TCP keepalive 探测间隔(秒)
+SERVER_TCP_KEEPALIVE_SECS=30
+
+# -------------------- 速率限制 --------------------
+# 每连接每秒最大消息数
+SERVER_RATE_LIMIT_PER_CONN=100
+
+# 令牌桶突发容量
+SERVER_RATE_LIMIT_BURST=10
+
+# 是否启用速率限制
+SERVER_RATE_LIMIT_ENABLED=true
+
+# -------------------- TLS 证书 --------------------
+# 证书文件路径(PEM 格式)
+TLS_CERT_PATH=./certs/server.crt
+
+# 私钥文件路径
+TLS_KEY_PATH=./certs/server.key
+
+# CA 证书(可选,本版本不启用客户端证书校验)
+# TLS_CA_PATH=
+
+# 最低 TLS 版本(固定 TLSv1.3,配置为其他值会启动失败)
+TLS_MIN_VERSION=TLSv1.3
+
+# -------------------- 数据库 (PostgreSQL 18) --------------------
+# 连接字符串(必须填写实际值!)
+DATABASE_URL=postgres://user:password@localhost:5432/game
+
+# 连接池最大连接数
+DATABASE_MAX_CONNECTIONS=30
+
+# 最小空闲连接数
+DATABASE_MIN_CONNECTIONS=5
+
+# 获取连接超时(秒)
+DATABASE_CONNECT_TIMEOUT_SECS=5
+
+# 连接空闲超时(秒)
+DATABASE_IDLE_TIMEOUT_SECS=300
+
+# sqlx 日志级别(trace/debug/info/warn/error)
+DATABASE_SQLX_LOG_LEVEL=warn
+
+# -------------------- Redis --------------------
+# Redis URL
+REDIS_URL=redis://127.0.0.1:6379
+
+# 连接池大小(MultiplexedConnection 可适当减小)
+REDIS_POOL_MAX_SIZE=10
+
+# 默认 TTL(秒),如 token 有效期
+REDIS_DEFAULT_TTL_SECS=604800
+
+# 连接超时(秒)
+REDIS_CONNECT_TIMEOUT_SECS=2
+
+# -------------------- 日志与可观测性 --------------------
+# 日志级别(trace/debug/info/warn/error)
+LOG_LEVEL=info
+
+# 日志格式(json 或 pretty)
+LOG_FORMAT=json
+
+# 是否启用 OpenTelemetry(单体阶段建议 false,预留)
+OTEL_ENABLED=false
+
+# Prometheus 指标端口(GET /metrics)
+METRICS_PORT=9090
+
+# -------------------- 应用层 --------------------
+# Session token 有效期(秒),与 Redis TTL 联动
+APP_SESSION_TOKEN_TTL_SECS=604800
+
+# argon2id 迭代次数
+APP_PASSWORD_ITERATIONS=3
+
+# argon2id 内存开销(KB)
+APP_PASSWORD_MEMORY_KB=19456
+
+# argon2id 并行度
+APP_PASSWORD_PARALLELISM=4
+
+# 单房间最大玩家数
+APP_MAX_PLAYERS_PER_ROOM=10
+
+# 优雅停机等待超时(秒)
+APP_SHUTDOWN_TIMEOUT_SECS=30

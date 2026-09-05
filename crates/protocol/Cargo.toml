@@ -1,0 +1,26 @@
+[package]
+name = "ppt-tcp-protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["The ppt-tcp Contributors"]
+description = "游戏消息协议:protobuf 定义、prost 生成、帧编解码适配与消息路由表"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ghyper9023/ppt-tcp"
+
+[dependencies]
+# protobuf 运行时(PRD 8.2:跨语言序列化方案)
+prost = "=0.14.4"
+# 帧与 Codec trait 定义
+ppt-tcp-net-kit = { path = "../net-kit", version = "=0.1.0" }
+thiserror = "=2.0.20"
+
+[build-dependencies]
+# prost 代码生成
+prost-build = "=0.14.4"
+# 纯 Rust protobuf 编译器(无需系统 protoc,CI 友好)
+protox = "=0.9.1"
+
+[dev-dependencies]
+# 路由器异步单测
+tokio = { version = "=1.53.1", features = ["macros", "rt"] }

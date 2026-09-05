@@ -1,0 +1,49 @@
+[package]
+name = "ppt-tcp-gateway"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["The ppt-tcp Contributors"]
+description = "接口层:TCP+TLS 长连接入口、HTTP(axum)入口、鉴权/限流中间件与消息路由装配"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ghyper9023/ppt-tcp"
+
+[dependencies]
+# 入站适配依赖:网络框架 + 协议 + 应用层(PRD 4.2,不直接依赖 domain)
+ppt-tcp-net-kit = { path = "../net-kit", version = "=0.1.0" }
+ppt-tcp-protocol = { path = "../protocol", version = "=0.1.0" }
+ppt-tcp-application = { path = "../application", version = "=0.1.0" }
+ppt-tcp-domain = { path = "../domain", version = "=0.1.0" }
+# 异步运行时
+tokio = { version = "=1.53.1", features = ["rt", "sync", "time", "net", "io-util", "macros"] }
+# HTTP 入口(PRD 8.3:登录/注册等低频操作)
+axum = "=0.8.9"
+# HTTP DTO 序列化
+serde = { version = "=1.0.229", features = ["derive"] }
+# 连接 ID
+uuid = { version = "=1.26.0", features = ["v7"] }
+# 会话心跳时间戳
+chrono = { version = "=0.4.45", features = ["serde"] }
+# 共享状态(不中毒的 Mutex,PRD 9.3)
+parking_lot = "=0.12.5"
+# 错误定义
+thiserror = "=2.0.20"
+# 指标(PRD 第 12 章)
+metrics = "=0.24.6"
+# 日志
+tracing = "=0.1.44"
+
+[dev-dependencies]
+# 路由层单测(oneshot 请求)
+tower = { version = "=0.5.3", features = ["util"] }
+serde_json = "=1.0.151"
+http-body-util = "=0.1.3"
+# 端到端 TLS 测试:自签证书与客户端连接
+rcgen = "=0.14.10"
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
+# 测试中实现端口 trait
+async-trait = "=0.1.92"
+# 端到端测试用内存版基础设施(仅测试依赖,不进入生产装配)
+ppt-tcp-infrastructure = { path = "../infrastructure", version = "=0.1.0" }

@@ -1,0 +1,29 @@
+[package]
+name = "ppt-tcp-application"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["The ppt-tcp Contributors"]
+description = "应用层:用例编排(Command/Query)、端口 trait、事务边界抽象与 Room Actor"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ghyper9023/ppt-tcp"
+
+[dependencies]
+# 领域层(依赖方向只指向内层,PRD 4.1)
+ppt-tcp-domain = { path = "../domain", version = "=0.1.0" }
+# 异步端口 trait
+async-trait = "=0.1.92"
+# 错误定义
+thiserror = "=2.0.20"
+# 时间
+chrono = { version = "=0.4.45", features = ["serde"] }
+# 标识
+uuid = { version = "=1.26.0", features = ["v7"] }
+# Room Actor / 端口使用的异步原语
+tokio = { version = "=1.53.1", features = ["sync", "rt"] }
+# 用例内结构化日志
+tracing = "=0.1.44"
+
+[dev-dependencies]
+# 异步单测(含超时等待)
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time"] }
