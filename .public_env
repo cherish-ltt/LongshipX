@@ -63,11 +63,12 @@ SERVER_RATE_LIMIT_BURST=10
 SERVER_RATE_LIMIT_ENABLED=true
 
 # -------------------- TLS 证书 --------------------
-# 证书文件路径(PEM 格式)
-TLS_CERT_PATH=./certs/server.crt
-
-# 私钥文件路径
-TLS_KEY_PATH=./certs/server.key
+# dev 环境:mkcert 生成的本机证书(路径开头的 ~/ 会被展开到用户主目录)
+TLS_CERT_PATH=~/certs/localhost.pem
+TLS_KEY_PATH=~/certs/localhost-key.pem
+# 生产环境示例:容器/服务目录内的证书(二选一,按部署调整)
+# TLS_CERT_PATH=/etc/ppt-tcp/server.crt
+# TLS_KEY_PATH=/etc/ppt-tcp/server.key
 
 # CA 证书(可选,本版本不启用客户端证书校验)
 # TLS_CA_PATH=
