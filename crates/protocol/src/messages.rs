@@ -13,6 +13,7 @@ pub enum InboundMessage {
     JoinRoom(pb::JoinRoomRequest),
     LeaveRoom(pb::LeaveRoomRequest),
     RoomChat(pb::RoomChatRequest),
+    GetProfile(pb::GetProfileRequest),
     /// 已知区段之外/无法识别的 opcode:由路由层统一回错误。
     Unknown(u16),
 }
@@ -22,6 +23,7 @@ pub enum InboundMessage {
 pub enum OutboundMessage {
     BindResult(pb::BindResult),
     HeartbeatAck(pb::HeartbeatAck),
+    Profile(pb::ProfileResponse),
     RoomEvent(pb::RoomEventNotification),
     Error(pb::ErrorNotification),
     Shutdown(pb::ServerShutdownNotice),
@@ -35,6 +37,7 @@ impl InboundMessage {
             Self::JoinRoom(_) => OP_C2S_JOIN_ROOM,
             Self::LeaveRoom(_) => OP_C2S_LEAVE_ROOM,
             Self::RoomChat(_) => OP_C2S_ROOM_CHAT,
+            Self::GetProfile(_) => OP_C2S_GET_PROFILE,
             Self::Unknown(opcode) => *opcode,
         }
     }
@@ -48,6 +51,7 @@ pub fn decode_inbound(opcode: u16, payload: &[u8]) -> Result<InboundMessage, Pro
         OP_C2S_JOIN_ROOM => InboundMessage::JoinRoom(pb::JoinRoomRequest::decode(payload)?),
         OP_C2S_LEAVE_ROOM => InboundMessage::LeaveRoom(pb::LeaveRoomRequest::decode(payload)?),
         OP_C2S_ROOM_CHAT => InboundMessage::RoomChat(pb::RoomChatRequest::decode(payload)?),
+        OP_C2S_GET_PROFILE => InboundMessage::GetProfile(pb::GetProfileRequest::decode(payload)?),
         other => InboundMessage::Unknown(other),
     };
     Ok(message)
@@ -58,6 +62,7 @@ pub fn encode_outbound(message: &OutboundMessage) -> Result<(u16, Vec<u8>), Prot
     let (opcode, bytes) = match message {
         OutboundMessage::BindResult(msg) => (OP_S2C_BIND_RESULT, msg.encode_to_vec()),
         OutboundMessage::HeartbeatAck(msg) => (OP_S2C_HEARTBEAT_ACK, msg.encode_to_vec()),
+        OutboundMessage::Profile(msg) => (OP_S2C_PROFILE, msg.encode_to_vec()),
         OutboundMessage::RoomEvent(msg) => (OP_S2C_ROOM_EVENT, msg.encode_to_vec()),
         OutboundMessage::Error(msg) => (OP_S2C_ERROR, msg.encode_to_vec()),
         OutboundMessage::Shutdown(msg) => (OP_S2C_SERVER_SHUTDOWN, msg.encode_to_vec()),
@@ -70,6 +75,7 @@ pub fn decode_outbound(opcode: u16, payload: &[u8]) -> Result<OutboundMessage, P
     let message = match opcode {
         OP_S2C_BIND_RESULT => OutboundMessage::BindResult(pb::BindResult::decode(payload)?),
         OP_S2C_HEARTBEAT_ACK => OutboundMessage::HeartbeatAck(pb::HeartbeatAck::decode(payload)?),
+        OP_S2C_PROFILE => OutboundMessage::Profile(pb::ProfileResponse::decode(payload)?),
         OP_S2C_ROOM_EVENT => {
             OutboundMessage::RoomEvent(pb::RoomEventNotification::decode(payload)?)
         },
@@ -134,6 +140,7 @@ mod tests {
             InboundMessage::JoinRoom(msg) => msg.encode_to_vec(),
             InboundMessage::LeaveRoom(msg) => msg.encode_to_vec(),
             InboundMessage::RoomChat(msg) => msg.encode_to_vec(),
+            InboundMessage::GetProfile(_) => Vec::new(),
             InboundMessage::Unknown(_) => Vec::new(),
         };
         ppt_tcp_net_kit::codec::Frame::new(opcode, payload)
@@ -217,6 +224,11 @@ mod tests {
                 ..Default::default()
             }),
             OutboundMessage::HeartbeatAck(pb::HeartbeatAck { server_ts_ms: 1 }),
+            OutboundMessage::Profile(pb::ProfileResponse {
+                ok: true,
+                level: Some(2),
+                ..Default::default()
+            }),
             room_event,
             OutboundMessage::Error(pb::ErrorNotification {
                 code: 1,

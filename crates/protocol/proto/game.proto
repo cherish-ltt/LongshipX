@@ -33,6 +33,10 @@ message RoomChatRequest {
   string text = 1;
 }
 
+// 查询自己的玩家档案(演示"只读用例走 TCP 通道"的完整链路)。
+message GetProfileRequest {
+}
+
 // ───────────────────────── S2C(服务端 → 客户端) ─────────────────────────
 
 // 绑定结果。
@@ -46,6 +50,18 @@ message BindResult {
 // 心跳应答(携带服务器时间,便于客户端估算时钟偏差)。
 message HeartbeatAck {
   int64 server_ts_ms = 1;
+}
+
+// 玩家档案(服务端权威数值,GetProfileRequest 的应答)。
+message ProfileResponse {
+  bool ok = 1;
+  optional string player_id = 2;
+  optional string nickname = 3;
+  optional uint32 level = 4;
+  optional uint64 exp = 5;
+  // 最近登录时间(Unix 毫秒);未登录过为空。
+  optional int64 last_login_at_ms = 6;
+  optional string error = 7;
 }
 
 // 通用错误通知。

@@ -71,6 +71,7 @@ async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
         router: build_router(),
         tokens: tokens.clone(),
         players: players.clone(),
+        profile: Arc::new(ppt_tcp_application::GetPlayerProfile::new(players.clone())),
         rooms,
         auth_gate: Arc::new(AuthGate::new(8)),
         connections: Arc::new(ConnectionRegistry::new()),

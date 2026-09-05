@@ -3,8 +3,8 @@
 use crate::tcp::auth_gate::AuthGate;
 use crate::tcp::connections::ConnectionRegistry;
 use parking_lot::Mutex;
-use ppt_tcp_application::RoomService;
 use ppt_tcp_application::ports::SessionTokenStore;
+use ppt_tcp_application::{GetPlayerProfile, RoomService};
 use ppt_tcp_domain::{PlayerId, PlayerRepository};
 use ppt_tcp_net_kit::OutboundSender;
 use ppt_tcp_protocol::Router;
@@ -39,6 +39,7 @@ pub struct GatewayDeps {
     pub router: Router<ConnContext>,
     pub tokens: Arc<dyn SessionTokenStore>,
     pub players: Arc<dyn PlayerRepository>,
+    pub profile: Arc<GetPlayerProfile>,
     pub rooms: Arc<RoomService>,
     pub auth_gate: Arc<AuthGate>,
     pub connections: Arc<ConnectionRegistry>,

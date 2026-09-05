@@ -186,6 +186,36 @@ pub async fn handle_room_chat(
     }
 }
 
+/// C2S_GET_PROFILE:查询自己档案,服务端权威数值(PRD 第 10 章)。
+pub async fn handle_get_profile(
+    ctx: ConnContext,
+    message: InboundMessage,
+) -> Result<Option<OutboundMessage>, ProtocolError> {
+    let InboundMessage::GetProfile(_) = message else {
+        return Err(ProtocolError::Handler(
+            "GET_PROFILE 路由收到异构消息".into(),
+        ));
+    };
+    let Some(player) = ctx.authed_player() else {
+        return Ok(Some(error_notification(
+            ERR_NOT_AUTHENTICATED,
+            "请先完成绑定",
+        )));
+    };
+    match ctx.deps.profile.execute(player.player_id).await {
+        Ok(profile) => Ok(Some(OutboundMessage::Profile(pb::ProfileResponse {
+            ok: true,
+            player_id: Some(profile.player_id.0.to_string()),
+            nickname: Some(profile.nickname),
+            level: Some(profile.level),
+            exp: Some(profile.exp),
+            last_login_at_ms: profile.last_login_at.map(|at| at.timestamp_millis()),
+            error: None,
+        }))),
+        Err(err) => Ok(Some(app_error_notification(err))),
+    }
+}
+
 /// 把应用层错误映射为面向客户端的错误通知(不泄漏内部细节)。
 pub fn app_error_notification(err: AppError) -> OutboundMessage {
     let (code, message) = match err {

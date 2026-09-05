@@ -7,9 +7,11 @@ pub const OP_C2S_HEARTBEAT: u16 = 0x0002;
 pub const OP_C2S_JOIN_ROOM: u16 = 0x0010;
 pub const OP_C2S_LEAVE_ROOM: u16 = 0x0011;
 pub const OP_C2S_ROOM_CHAT: u16 = 0x0012;
+pub const OP_C2S_GET_PROFILE: u16 = 0x0013;
 
 pub const OP_S2C_BIND_RESULT: u16 = 0x8001;
 pub const OP_S2C_HEARTBEAT_ACK: u16 = 0x8002;
+pub const OP_S2C_PROFILE: u16 = 0x8003;
 pub const OP_S2C_ROOM_EVENT: u16 = 0x8010;
 pub const OP_S2C_ERROR: u16 = 0x8011;
 pub const OP_S2C_SERVER_SHUTDOWN: u16 = 0x8012;

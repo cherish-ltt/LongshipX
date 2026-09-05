@@ -59,6 +59,7 @@ impl net_kit_codec::Codec for ClientCodec {
             InboundMessage::JoinRoom(msg) => (opcodes::OP_C2S_JOIN_ROOM, msg.encode_to_vec()),
             InboundMessage::LeaveRoom(msg) => (opcodes::OP_C2S_LEAVE_ROOM, msg.encode_to_vec()),
             InboundMessage::RoomChat(msg) => (opcodes::OP_C2S_ROOM_CHAT, msg.encode_to_vec()),
+            InboundMessage::GetProfile(msg) => (opcodes::OP_C2S_GET_PROFILE, msg.encode_to_vec()),
             InboundMessage::Unknown(opcode) => {
                 return Err(ProtocolError::UnsupportedOpcode(*opcode));
             },

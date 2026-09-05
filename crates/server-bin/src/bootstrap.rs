@@ -184,6 +184,7 @@ async fn start_tcp_gateway(
         router: build_router(),
         tokens: services.tokens.clone(),
         players: services.players.clone(),
+        profile: services.profile.clone(),
         rooms: services.rooms.clone(),
         auth_gate: Arc::new(AuthGate::new(config.network.unauth_max_per_ip)),
         connections: Arc::new(ConnectionRegistry::new()),

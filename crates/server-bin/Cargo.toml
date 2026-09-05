@@ -38,3 +38,8 @@ metrics = "=0.24.6"
 metrics-exporter-prometheus = "=0.18.3"
 # .env 加载(PRD 18.3)
 dotenvy = "=0.15.7"
+
+[dev-dependencies]
+# quickstart_client 示例:TLS 客户端(与 net-kit 同版本)
+rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
