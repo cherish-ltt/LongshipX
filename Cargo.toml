@@ -86,3 +86,6 @@ metrics-exporter-prometheus = "=0.18.3"
 tower = { version = "=0.5.3", features = ["util"] }
 http-body-util = "=0.1.5"
 rcgen = "=0.14.10"
+
+# ── 基准测试(harness = false 的 bench 目标专用)──
+criterion = "=0.5.1"

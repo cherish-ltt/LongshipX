@@ -27,3 +27,13 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # 测试用自签证书生成
 rcgen = { workspace = true }
+# 基准测试
+criterion = { workspace = true }
+
+[[bench]]
+name = "frame_codec"
+harness = false
+
+[[bench]]
+name = "connection"
+harness = false

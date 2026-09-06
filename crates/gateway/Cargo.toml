@@ -48,3 +48,13 @@ tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # 端到端测试用内存版基础设施(仅测试依赖,不进入生产装配)
 longshipx-infrastructure = { workspace = true }
+# 基准测试
+criterion = { workspace = true }
+
+[[bench]]
+name = "http"
+harness = false
+
+[[bench]]
+name = "tcp_room"
+harness = false
