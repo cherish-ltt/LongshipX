@@ -286,3 +286,10 @@ msrv = "1.95.0"
 - 端到端类基准(`tcp_room`)的客户端接收逻辑必须**确定性排空**事件流(过滤非目标消息),禁止依赖超时猜测,防止基准自身挂死。
 - 修改网络/协议/网关层后,除跑 e2e 外建议运行对应基准对比 `target/criterion/` 历史基线;**基准暴露的资源泄漏/挂死必须转为确定性回归测试**(如连接名额泄漏之于 `connection_permits_are_released_after_disconnect`)。
 - 基准代码同样受 `cargo fmt`/`cargo clippy --all-targets -- -D warnings` 约束(CI 自动覆盖);运行方式与参考数值见 README"性能基准"一节。
+
+### 10.10 版本与变更记录
+
+- 版本号遵循语义化版本(SemVer)。升级版本时必须同步:根 `Cargo.toml` 的 `[workspace.package]` 与 `[workspace.dependencies]` 内部依赖约束(`=`)、全部成员 crate 的内联 `version`,并执行 `cargo update -w` 同步 `Cargo.lock`。
+- 变更记录位于 `docs/versions/`,**每个发布版本一个独立 Markdown 文件**,命名为 `vX.Y.Z.md`(如 `v0.1.0.md`、`v0.2.0.md`);不再维护单一 CHANGELOG 文件。
+- 版本文件按 Keep a Changelog 风格以 `Changed` / `Added` / `Fixed` / `Removed` 等小节记录用户可感知的变更;**发布新版本时新建对应文件**,与版本号改动在同一发布批次提交。
+- 发布流程:新增 `docs/versions/vX.Y.Z.md` + 版本号同步(`chore: 版本更新至 X.Y.Z`)→ 打注解 tag `vX.Y.Z` → push 分支与 tag。
