@@ -75,6 +75,10 @@ pub async fn handle_connection(
     }
     deps.connections.remove(conn_id);
     translator.abort();
+    // ctx 与 outbound 各持有一份发送端克隆;写 task 只有在全部发送端关闭后
+    // 才会退出,二者必须先于 writer.await 丢弃,否则连接处理器挂起并泄漏
+    // 连接数名额(accept_loop 信号量永不归还)。
+    drop(ctx);
     drop(outbound);
     let _ = writer.await;
     metrics::gauge!("longshipx_connections_active").decrement(1.0);

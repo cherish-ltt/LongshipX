@@ -278,6 +278,30 @@ async fn bind_with_bad_token_is_rejected_but_connection_stays() {
     server.shutdown_tx.send_replace(true);
 }
 
+/// 回归测试:连接断开后必须归还并发名额,否则累计连接数达到
+/// `max_connections` 后所有新连接都会被拒(曾因连接处理器在
+/// `writer.await` 处挂起而泄漏名额)。
+#[tokio::test]
+async fn connection_permits_are_released_after_disconnect() {
+    let mut config = test_config("127.0.0.1:0".parse().unwrap());
+    config.max_connections = 4;
+    let server = spawn_server_with(config).await;
+
+    for round in 0..8u32 {
+        let (bind, _) = make_player_with_token(&server, &format!("轮回{round}")).await;
+        let mut client = TestClient::connect(server.addr).await;
+        client.send(&InboundMessage::Bind(bind)).await;
+        let OutboundMessage::BindResult(result) = client.recv_expect("BindResult").await else {
+            panic!("第 {round} 轮应收到 BindResult");
+        };
+        assert!(result.ok, "第 {round} 轮绑定应成功:连接名额应已归还");
+        drop(client);
+        // 等待服务端走完断开清理,避免与下一轮建连竞争名额归还时机。
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    server.shutdown_tx.send_replace(true);
+}
+
 #[tokio::test]
 async fn message_before_bind_is_rejected_and_connection_closed() {
     let server = spawn_server().await;
