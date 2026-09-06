@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
@@ -28,13 +28,13 @@ repository = "https://github.com/cherish-ltt/LongshipX"
 [workspace.dependencies]
 
 # ── workspace 内部 crate(路径 + 版本)──
-longshipx-domain = { path = "crates/domain", version = "=0.1.0" }
-longshipx-application = { path = "crates/application", version = "=0.1.0" }
-longshipx-net-kit = { path = "crates/net-kit", version = "=0.1.0" }
-longshipx-protocol = { path = "crates/protocol", version = "=0.1.0" }
-longshipx-infrastructure = { path = "crates/infrastructure", version = "=0.1.0" }
-longshipx-gateway = { path = "crates/gateway", version = "=0.1.0" }
-longshipx-migration = { path = "migration", version = "=0.1.0" }
+longshipx-domain = { path = "crates/domain", version = "=0.2.0" }
+longshipx-application = { path = "crates/application", version = "=0.2.0" }
+longshipx-net-kit = { path = "crates/net-kit", version = "=0.2.0" }
+longshipx-protocol = { path = "crates/protocol", version = "=0.2.0" }
+longshipx-infrastructure = { path = "crates/infrastructure", version = "=0.2.0" }
+longshipx-gateway = { path = "crates/gateway", version = "=0.2.0" }
+longshipx-migration = { path = "migration", version = "=0.2.0" }
 
 # ── 异步运行时与网络 ──
 tokio = "=1.53.1"
@@ -88,4 +88,4 @@ http-body-util = "=0.1.5"
 rcgen = "=0.14.10"
 
 # ── 基准测试(harness = false 的 bench 目标专用)──
-criterion = "=0.5.1"
+criterion = "=0.8.2"
