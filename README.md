@@ -297,6 +297,29 @@ cargo llvm-cov --workspace --summary-only   # 覆盖率
 * 端到端测试使用 rcgen 自签证书走真实 TLS 握手(见 `crates/gateway/tests/e2e.rs`);
 * 当前覆盖率基线:全仓行覆盖 ≈ 88%,核心 crate(domain/application/protocol/net-kit/gateway-http)≈ 83%–100%。
 
+## 性能基准
+
+基于 criterion 的基准套件覆盖框架全部热路径,全部可离线运行(真实 loopback TCP/TLS + 内存版基础设施):
+
+| 位置 | 内容 | 典型结果(M3 级单核) |
+| --- | --- | --- |
+| `crates/net-kit/benches/frame_codec.rs` | 长度前缀帧编解码(0B–64KiB 载荷) | 空载荷 ~26ns,64KiB ~1µs |
+| `crates/net-kit/benches/connection.rs` | TCP/TLS 小帧往返、TLS 1.3 握手、64KiB×32 大帧吞吐 | 往返 ~54µs,握手 ~420µs,TLS 吞吐 ~760MiB/s |
+| `crates/protocol/benches/codec.rs` | 消息编解码往返、路由表分发 | C2S 全链路 ~70ns,分发 ~153ns |
+| `crates/gateway/benches/http.rs` | axum 链路:healthz / Bearer 鉴权 / 登录(含 argon2) | healthz ~1.2µs,argon2 登录 ~6ms |
+| `crates/gateway/benches/tcp_room.rs` | 端到端:建连绑定 / 心跳 / 房间聊天广播(8/32 人) | 绑定 ~360µs,心跳 ~40µs,32 人广播 ~346µs |
+
+```bash
+cargo bench                                            # 全部基准(约 5–8 分钟)
+cargo bench -p longshipx-net-kit --bench connection    # 单个套件
+cargo bench -p longshipx-gateway --bench tcp_room -- \
+    --warm-up-time 0.5 --measurement-time 2            # 自定义时长
+```
+
+* 每次迭代都是真实网络 IO(`127.0.0.1`)与真实 TLS 握手,数字包含框架全部每连接开销;
+* 结果保存在 `target/criterion/`,打开 `report/index.html` 可看历史对比曲线;
+* 基准曾直接暴露过"连接断开后信号量名额不归还"的缺陷(见 e2e 回归测试 `connection_permits_are_released_after_disconnect`)——改网络层后先跑基准与 e2e。
+
 ## 贡献指南
 
 * **必须**遵守 [AGENTS.md](AGENTS.md)(提交格式 `<type>: <中文描述>`、版本锁定 `=`、CI 检查、DDD 分层红线,追加规范写入其第 10 章);

@@ -277,3 +277,12 @@ msrv = "1.95.0"
 - `.github/workflows/rust-ci.yml` 使用 GitHub Actions 原生 `paths` 白名单:仅当 **`.rs`、`.proto`、`Cargo.toml`、`Cargo.lock`、rustfmt/clippy 配置、workflow 文件自身** 变更时才执行;纯文档/配置模板提交(`*.md`、`docs/**`、`.public_env` 等)自动跳过,不占用 runner 时长。
 - ⚠️ 向白名单**新增会参与构建的文件类型时必须同步该列表**(如新增 `build.rs` 读取的外部资源、`rust-toolchain.toml` 已预置);宁可多触发,不可漏触发。
 - 白名单语义是"漏改即漏检",若希望改为"仅文档变更跳过"的黑名单语义(`paths-ignore`),需评审后统一调整第 2 节与本节。
+
+### 10.9 性能基准(benchmarks)
+
+- 框架热路径必须有 criterion 基准,统一 `harness = false` 声明在对应 crate 的 `Cargo.toml`;criterion 版本锁定在根 `Cargo.toml` 的 `[workspace.dependencies]`。现有套件:`net-kit` 的 `frame_codec`/`connection`、`protocol` 的 `codec`、`gateway` 的 `http`/`tcp_room`。
+- 基准必须**可离线运行**:网络类基准一律 loopback(`127.0.0.1:0`)真实 TCP/TLS + 内存版基础设施,禁止依赖 PG/Redis/外部服务。
+- 计时循环内不得引入额外分配以外的人为开销;屏蔽编译器优化用 `std::hint::black_box`(勿用 criterion 已废弃的 `criterion::black_box`)。异步代码用常驻 `Runtime::block_on` 驱动,运行时在基准装置阶段创建。
+- 端到端类基准(`tcp_room`)的客户端接收逻辑必须**确定性排空**事件流(过滤非目标消息),禁止依赖超时猜测,防止基准自身挂死。
+- 修改网络/协议/网关层后,除跑 e2e 外建议运行对应基准对比 `target/criterion/` 历史基线;**基准暴露的资源泄漏/挂死必须转为确定性回归测试**(如连接名额泄漏之于 `connection_permits_are_released_after_disconnect`)。
+- 基准代码同样受 `cargo fmt`/`cargo clippy --all-targets -- -D warnings` 约束(CI 自动覆盖);运行方式与参考数值见 README"性能基准"一节。
