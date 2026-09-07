@@ -1,6 +1,6 @@
 [package]
 name = "longshipx-gateway"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.98.1"
 authors = ["The LongshipX Contributors"]
@@ -50,6 +50,12 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 longshipx-infrastructure = { workspace = true }
 # 基准测试
 criterion = { workspace = true }
+# 内存足迹基准:fd 上限提升与 RSS 采样
+libc = { workspace = true }
+# 基准客户端建连:SO_REUSEADDR 缓解 TIME_WAIT 占满临时端口
+socket2 = { workspace = true }
+# 基准排障:RUST_LOG 控制输出框架诊断日志
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "http"
@@ -57,4 +63,8 @@ harness = false
 
 [[bench]]
 name = "tcp_room"
+harness = false
+
+[[bench]]
+name = "footprint"
 harness = false
