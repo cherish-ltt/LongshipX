@@ -26,6 +26,8 @@ pub struct TcpGatewayConfig {
     pub max_connections: usize,
     /// TCP listen backlog。
     pub backlog: u32,
+    /// TLS 握手(accept 管线)并行度;1 = 串行握手(旧版行为)。
+    pub accept_concurrency: u32,
     /// 是否开启 TCP_NODELAY(禁用 Nagle)。
     pub nodelay: bool,
     /// TCP keepalive 探测间隔。

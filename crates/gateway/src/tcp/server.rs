@@ -3,7 +3,7 @@
 use crate::tcp::config::TcpGatewayConfig;
 use crate::tcp::context::GatewayDeps;
 use crate::tcp::handler;
-use longshipx_net_kit::{TcpTlsTransport, TlsAcceptor, accept_loop};
+use longshipx_net_kit::{AcceptLoopConfig, TcpTlsTransport, TlsAcceptor, accept_loop_with};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -49,9 +49,12 @@ impl TcpGateway {
                 handler::handle_connection(stream, peer, deps, config).await;
             }
         };
-        accept_loop(
+        accept_loop_with(
             self.transport.clone(),
-            Some(self.config.max_connections),
+            AcceptLoopConfig {
+                max_concurrent: Some(self.config.max_connections),
+                accept_concurrency: self.config.accept_concurrency.max(1) as usize,
+            },
             shutdown,
             handler,
         )

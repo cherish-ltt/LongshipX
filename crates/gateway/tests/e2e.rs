@@ -44,6 +44,7 @@ fn test_config(addr: std::net::SocketAddr) -> TcpGatewayConfig {
         rate: RATE_OFF,
         max_connections: 64,
         backlog: 16,
+        accept_concurrency: 4,
         nodelay: true,
         keepalive: Duration::from_secs(30),
     }
