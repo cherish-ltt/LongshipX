@@ -307,18 +307,21 @@ cargo llvm-cov --workspace --summary-only   # 覆盖率
 | `crates/net-kit/benches/connection.rs` | TCP/TLS 小帧往返、TLS 1.3 握手、64KiB×32 大帧吞吐 | 往返 ~54µs,握手 ~420µs,TLS 吞吐 ~760MiB/s |
 | `crates/protocol/benches/codec.rs` | 消息编解码往返、路由表分发 | C2S 全链路 ~70ns,分发 ~153ns |
 | `crates/gateway/benches/http.rs` | axum 链路:healthz / Bearer 鉴权 / 登录(含 argon2) | healthz ~1.2µs,argon2 登录 ~6ms |
-| `crates/gateway/benches/tcp_room.rs` | 端到端:建连绑定 / 心跳 / 房间聊天广播(8/32 人) | 绑定 ~360µs,心跳 ~40µs,32 人广播 ~346µs |
+| `crates/gateway/benches/tcp_room.rs` | 端到端:建连绑定 / 心跳 / 单房间广播 8~256 人 / 多连接并发心跳 8~256 条 | 绑定 ~866µs,心跳 ~38µs,256 人广播 ~1.23ms(~209K 事件/s) |
+| `crates/gateway/benches/footprint.rs` | 连接内存足迹:64/128/256 常驻 TLS 连接的 RSS 与活跃堆分配 | ~28KiB 堆 / ~37KiB RSS 每连接(含两端) |
 
 ```bash
 cargo bench                                            # 全部基准(约 5–8 分钟)
 cargo bench -p longshipx-net-kit --bench connection    # 单个套件
 cargo bench -p longshipx-gateway --bench tcp_room -- \
     --warm-up-time 0.5 --measurement-time 2            # 自定义时长
+cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 criterion)
 ```
 
 * 每次迭代都是真实网络 IO(`127.0.0.1`)与真实 TLS 握手,数字包含框架全部每连接开销;
+* 基准公共装置 `benches/support/`:进程内提升 fd 上限(macOS 默认 256 不够)、建连固定并发 64(< macOS `kern.ipc.somaxconn=128`)、看门狗超时、短命连接 `SO_LINGER=0` 回收端口;服务端启用并发握手管线(`SERVER_ACCEPT_CONCURRENCY`)即时排空内核 accept 队列——否则 macOS 等系统 backlog 限制会在突发建连时丢弃/重置连接;
 * 结果保存在 `target/criterion/`,打开 `report/index.html` 可看历史对比曲线;
-* 基准曾直接暴露过"连接断开后信号量名额不归还"的缺陷(见 e2e 回归测试 `connection_permits_are_released_after_disconnect`)——改网络层后先跑基准与 e2e。
+* 基准曾直接暴露过"连接断开后信号量名额不归还"的缺陷(见 e2e 回归测试 `connection_permits_are_released_after_disconnect`)、"建连闸门 permit 随连接持有导致基准挂死"的缺陷与"心跳客户端装配段占住闸门"的死锁——改网络层后先跑基准与 e2e。
 
 ## 贡献指南
 

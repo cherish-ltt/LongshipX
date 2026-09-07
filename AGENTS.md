@@ -280,10 +280,13 @@ msrv = "1.95.0"
 
 ### 10.9 性能基准(benchmarks)
 
-- 框架热路径必须有 criterion 基准,统一 `harness = false` 声明在对应 crate 的 `Cargo.toml`;criterion 版本锁定在根 `Cargo.toml` 的 `[workspace.dependencies]`。现有套件:`net-kit` 的 `frame_codec`/`connection`、`protocol` 的 `codec`、`gateway` 的 `http`/`tcp_room`。
+- 框架热路径必须有 criterion 基准,统一 `harness = false` 声明在对应 crate 的 `Cargo.toml`;criterion 版本锁定在根 `Cargo.toml` 的 `[workspace.dependencies]`。现有套件:`net-kit` 的 `frame_codec`/`connection`、`protocol` 的 `codec`、`gateway` 的 `http`/`tcp_room`/`footprint`。
 - 基准必须**可离线运行**:网络类基准一律 loopback(`127.0.0.1:0`)真实 TCP/TLS + 内存版基础设施,禁止依赖 PG/Redis/外部服务。
 - 计时循环内不得引入额外分配以外的人为开销;屏蔽编译器优化用 `std::hint::black_box`(勿用 criterion 已废弃的 `criterion::black_box`)。异步代码用常驻 `Runtime::block_on` 驱动,运行时在基准装置阶段创建。
 - 端到端类基准(`tcp_room`)的客户端接收逻辑必须**确定性排空**事件流(过滤非目标消息),禁止依赖超时猜测,防止基准自身挂死。
+- 端到端基准档位上限 **256 连接**(广播/心跳零容差断言在此范围内全绿);更大档位受本机临时端口区间与调度抖动限制(1024+ 实测出现事件缺口与建连失败),需要时另行专项评估,不得随手加档。基准必须走 `crates/gateway/benches/support/` 公共装置:`raise_fd_limit()` 提升 fd 上限、`ConnectGate` 固定建连并发(64 < macOS somaxconn 128)、看门狗超时、基准客户端一律 `tcp_connect_reuse(addr, true)`(`SO_LINGER=0`,防 TIME_WAIT 耗尽临时端口)。
+- **闸门 permit 只允许覆盖建连/绑定段**:任务体内进入常驻循环(转发/心跳轮询)前必须把常驻工作转交独立 task 并返回,否则 `gate.run` 永久等待、后续档位装配死锁。
+- 服务端被测配置按基准目的放宽防护类参数(超时/队列/房间容量),并在基准源码注释中说明对应的环境变量。
 - 修改网络/协议/网关层后,除跑 e2e 外建议运行对应基准对比 `target/criterion/` 历史基线;**基准暴露的资源泄漏/挂死必须转为确定性回归测试**(如连接名额泄漏之于 `connection_permits_are_released_after_disconnect`)。
 - 基准代码同样受 `cargo fmt`/`cargo clippy --all-targets -- -D warnings` 约束(CI 自动覆盖);运行方式与参考数值见 README"性能基准"一节。
 
