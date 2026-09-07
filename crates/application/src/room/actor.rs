@@ -254,7 +254,12 @@ impl RoomActor {
     /// 向全体成员广播;投递策略:通道满则丢弃该成员的这条消息(PRD 8.5)。
     fn broadcast(&self, event: RoomEvent) {
         for member in self.members.values() {
-            let _ = member.sink.try_send(event.clone());
+            if member.sink.try_send(event.clone()).is_err() {
+                tracing::debug!(
+                    room = %self.room.id(),
+                    "成员事件通道满,丢弃该成员的这条广播"
+                );
+            }
         }
     }
 
