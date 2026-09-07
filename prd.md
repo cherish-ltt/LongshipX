@@ -783,7 +783,7 @@ testcontainers = "0.23"
 | `APP_PASSWORD_ITERATIONS`    | `u32` | `3`      | argon2id 迭代次数（根据性能调优）             |
 | `APP_PASSWORD_MEMORY_KB`     | `u32` | `19456`  | argon2id 内存开销（KB）                       |
 | `APP_PASSWORD_PARALLELISM`   | `u32` | `4`      | argon2id 并行度                               |
-| `APP_MAX_PLAYERS_PER_ROOM`   | `u32` | `10`     | 单房间最大玩家数（按实际玩法可覆盖）          |
+| `APP_MAX_PLAYERS_PER_ROOM`   | `u32` | `64`     | 单房间最大玩家数（按实际玩法可覆盖）          |
 | `APP_SHUTDOWN_TIMEOUT_SECS`  | `u64` | `30`     | 优雅停机时等待现有事务完成的超时秒数          |
 
 ---
@@ -924,7 +924,7 @@ APP_PASSWORD_MEMORY_KB=19456
 APP_PASSWORD_PARALLELISM=4
 
 # 单房间最大玩家数
-APP_MAX_PLAYERS_PER_ROOM=10
+APP_MAX_PLAYERS_PER_ROOM=64
 
 # 优雅停机等待超时（秒）
 APP_SHUTDOWN_TIMEOUT_SECS=30
