@@ -19,7 +19,7 @@ pub use backpressure::OutboundSender;
 pub use codec::{Frame, encode_frame, read_frame, write_frame};
 pub use connection::{ConnectionConfig, FrameReader, split_connection};
 pub use error::NetError;
-pub use listener::accept_loop;
+pub use listener::{AcceptLoopConfig, accept_loop, accept_loop_with};
 pub use transport::{TcpTlsTransport, Transport};
 
 /// 当前传输的连接类型:TCP + TLS 1.3。
