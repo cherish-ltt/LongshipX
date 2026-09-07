@@ -177,6 +177,7 @@ async fn start_tcp_gateway(
         },
         max_connections: config.network.max_connections,
         backlog: config.network.backlog,
+        accept_concurrency: config.network.accept_concurrency,
         nodelay: config.network.tcp_nodelay,
         keepalive: Duration::from_secs(config.network.tcp_keepalive_secs),
     };

@@ -27,6 +27,9 @@ pub struct NetworkConfig {
     pub wss_bind_addr: String,
     pub max_connections: usize,
     pub backlog: u32,
+    /// TLS 握手(accept 管线)并行度:1 = 串行握手;加大可避免突发建连
+    /// 拖慢 accept 队列排空(macOS somaxconn=128 下表现为连接被重置)。
+    pub accept_concurrency: u32,
     pub read_buffer_size: usize,
     pub write_buffer_size: usize,
     pub channel_per_conn: usize,
@@ -177,6 +180,7 @@ fn network_from_lookup(lookup: &mut Lookup<'_>) -> ConfigResult<NetworkConfig> {
         wss_bind_addr: env_str(lookup, "SERVER_WSS_BIND_ADDR", "0.0.0.0:8082"),
         max_connections: env_usize(lookup, "SERVER_MAX_CONNECTIONS", 10_000)?,
         backlog: env_u32(lookup, "SERVER_CONNECTION_BACKLOG", 1024)?,
+        accept_concurrency: env_u32(lookup, "SERVER_ACCEPT_CONCURRENCY", 256)?,
         read_buffer_size: env_usize(lookup, "SERVER_TCP_READ_BUFFER_SIZE", 16_384)?,
         write_buffer_size: env_usize(lookup, "SERVER_TCP_WRITE_BUFFER_SIZE", 16_384)?,
         channel_per_conn: env_usize(lookup, "SERVER_CHANNEL_PER_CONN_SIZE", 256)?,
@@ -250,7 +254,7 @@ fn app_from_lookup(lookup: &mut Lookup<'_>) -> ConfigResult<AppConfig> {
         password_iterations: env_u32(lookup, "APP_PASSWORD_ITERATIONS", 3)?,
         password_memory_kb: env_u32(lookup, "APP_PASSWORD_MEMORY_KB", 19_456)?,
         password_parallelism: env_u32(lookup, "APP_PASSWORD_PARALLELISM", 4)?,
-        max_players_per_room: env_u32(lookup, "APP_MAX_PLAYERS_PER_ROOM", 10)?,
+        max_players_per_room: env_u32(lookup, "APP_MAX_PLAYERS_PER_ROOM", 64)?,
         shutdown_timeout_secs: env_u64(lookup, "APP_SHUTDOWN_TIMEOUT_SECS", 30)?,
     })
 }
@@ -355,6 +359,7 @@ mod tests {
         assert_eq!(config.network.wss_bind_addr, "0.0.0.0:8082");
         assert_eq!(config.network.max_connections, 10_000);
         assert_eq!(config.network.backlog, 1024);
+        assert_eq!(config.network.accept_concurrency, 256);
         assert_eq!(config.network.read_buffer_size, 16_384);
         assert_eq!(config.network.write_buffer_size, 16_384);
         assert_eq!(config.network.channel_per_conn, 256);
@@ -389,7 +394,7 @@ mod tests {
         assert_eq!(config.app.session_token_ttl_secs, 604_800);
         assert_eq!(config.app.password_params(), (19_456, 3, 4));
         assert_eq!(config.app.session_token_ttl(), Duration::from_secs(604_800));
-        assert_eq!(config.app.max_players_per_room, 10);
+        assert_eq!(config.app.max_players_per_room, 64);
         assert_eq!(config.app.shutdown_timeout_secs, 30);
         assert!(config.is_database_url_placeholder());
         assert!(config.validate().is_ok());
@@ -402,9 +407,11 @@ mod tests {
             ("SERVER_HTTP_REDIRECT_ADDR", "0.0.0.0:80"),
             ("SERVER_MAX_FRAME_SIZE", "4096"),
             ("SERVER_MAX_CONNECTIONS", "500"),
+            ("SERVER_ACCEPT_CONCURRENCY", "32"),
             ("SERVER_TCP_NODELAY", "false"),
             ("SERVER_RATE_LIMIT_ENABLED", "off"),
             ("APP_MAX_PLAYERS_PER_ROOM", "4"),
+            ("APP_MAX_ROOM_CEILING", "8192"),
             ("TLS_CA_PATH", "   "),
             ("DATABASE_URL", "postgres://real:pw@db:5432/game"),
         ])
@@ -416,6 +423,7 @@ mod tests {
         );
         assert_eq!(config.network.max_frame_size, 4096);
         assert_eq!(config.network.max_connections, 500);
+        assert_eq!(config.network.accept_concurrency, 32);
         assert!(!config.network.tcp_nodelay);
         assert!(!config.rate_limit.enabled);
         assert_eq!(config.app.max_players_per_room, 4);

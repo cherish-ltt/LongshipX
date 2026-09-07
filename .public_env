@@ -25,6 +25,11 @@ SERVER_MAX_CONNECTIONS=10000
 # TCP listen backlog
 SERVER_CONNECTION_BACKLOG=1024
 
+# TLS 握手(accept 管线)并行度:1 = 串行握手;默认 256。
+# 突发建连时并行握手可即时排空内核 accept 队列,避免 macOS(somaxconn=128)
+# 等系统 backlog 限制导致的连接重置。
+SERVER_ACCEPT_CONCURRENCY=256
+
 # 读/写缓冲区初始大小(字节)
 SERVER_TCP_READ_BUFFER_SIZE=16384
 SERVER_TCP_WRITE_BUFFER_SIZE=16384
@@ -138,8 +143,8 @@ APP_PASSWORD_MEMORY_KB=19456
 # argon2id 并行度
 APP_PASSWORD_PARALLELISM=4
 
-# 单房间最大玩家数
-APP_MAX_PLAYERS_PER_ROOM=10
+# 单房间最大玩家数(单主城地图作为一个 room 时可调到数千)
+APP_MAX_PLAYERS_PER_ROOM=64
 
 # 优雅停机等待超时(秒)
 APP_SHUTDOWN_TIMEOUT_SECS=30
