@@ -37,10 +37,10 @@ impl fmt::Display for RoomState {
     }
 }
 
-/// 房间人数硬上限,防止配置错误导致资源放大(可被 APP_MAX_PLAYERS_PER_ROOM 覆盖)。
-pub const MAX_ROOM_PLAYERS: u32 = 1024;
-
 /// 房间聚合根。
+///
+/// 人数上限由运行配置直接给定(`APP_MAX_PLAYERS_PER_ROOM`):普通玩法房间
+/// 保持小容量,单主城地图类玩法可把该值调到数千,领域层不再二次收敛。
 #[derive(Debug, Clone)]
 pub struct Room {
     id: RoomId,
@@ -51,12 +51,12 @@ pub struct Room {
 }
 
 impl Room {
-    /// 开启新房间,人数上限收敛到 1..=MAX_ROOM_PLAYERS。
+    /// 开启新房间,容量由运行配置直接给定(至少 1 人)。
     pub fn open(max_players: u32, now: DateTime<Utc>) -> Self {
         Self {
             id: RoomId(uuid::Uuid::now_v7()),
             members: Vec::new(),
-            max_players: max_players.clamp(1, MAX_ROOM_PLAYERS),
+            max_players: max_players.max(1),
             state: RoomState::Waiting,
             created_at: now,
         }
@@ -181,7 +181,8 @@ mod tests {
         let small = room(0);
         assert_eq!(small.max_players(), 1);
         assert_eq!(small.state(), RoomState::Waiting);
-        assert!(room(10_000).max_players() <= MAX_ROOM_PLAYERS);
+        // 容量由配置直接给定,大容量(主城形态)不再被二次收敛。
+        assert_eq!(room(8192).max_players(), 8192);
         assert!(small.id().0.get_version_num() == 7);
     }
 

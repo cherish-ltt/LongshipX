@@ -3,5 +3,5 @@
 mod aggregate;
 mod repository;
 
-pub use aggregate::{MAX_ROOM_PLAYERS, Room, RoomId, RoomState};
+pub use aggregate::{Room, RoomId, RoomState};
 pub use repository::RoomRepository;

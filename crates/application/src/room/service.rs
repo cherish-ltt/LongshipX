@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 pub struct RoomServiceConfig {
     /// 每个 Room Actor 命令队列容量(有界背压)。
     pub command_capacity: usize,
-    /// 单房间最大玩家数。
+    /// 单房间最大玩家数(来自配置 `APP_MAX_PLAYERS_PER_ROOM`,主城地图形态可调大)。
     pub max_players: u32,
 }
 
@@ -230,6 +230,36 @@ mod tests {
             },
             Arc::new(CountingPublisher(AtomicUsize::new(0))),
         ))
+    }
+
+    #[tokio::test]
+    async fn configured_capacity_allows_city_scale_rooms() {
+        // 主城形态:配置直接给定数千人容量,不再被领域层收敛。
+        let rooms = service(8192);
+        let room_id = rooms
+            .join_or_create(
+                None,
+                PlayerId(uuid::Uuid::now_v7()),
+                "城主".into(),
+                mpsc::channel(64).0,
+            )
+            .await
+            .unwrap();
+        // 第二名成员可继续加入,验证容量确实按配置生效。
+        let (tx, mut rx) = mpsc::channel(64);
+        rooms
+            .join_or_create(
+                Some(room_id),
+                PlayerId(uuid::Uuid::now_v7()),
+                "居民".into(),
+                tx,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            rx.recv().await,
+            Some(RoomEvent::MemberJoined { .. })
+        ));
     }
 
     #[tokio::test]
