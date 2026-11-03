@@ -63,7 +63,7 @@
 | **TCP + TLS1.3（本 PRD 采用）** | TLS1.3 | 有 | 好 | 极高（tokio-rustls） | 稳、快、安全，通用长连接首选 |
 | wss | TLS1.3 | 有（仍是TCP） | 好，多一层帧开销 | 高（tokio-tungstenite） | 仅浏览器/H5 客户端需要 |
 | nginx(wss)+tcp | 网关侧TLS | 有 | 好，多一跳延迟 | 高，运维复杂度上升 | 网页接入网关方案，非核心协议 |
-| KCP | 无（需自建） | 无（ARQ快速重传） | 弱网下更优，带宽利用率低于TCP | 中，弱于TCP生态 | 强实时对抗类游戏可选项 |
+| KCP + TLS1.3（可选） | TLS1.3 | 有（单一有序字节流） | 取决于网络与参数，需实测 | kcp-ovo 底层适配 | 与 TCP 并行,不预设弱网更快 |
 | QUIC | 强制TLS1.3 | 无（多路复用） | 优秀，支持连接迁移 | 中高，"自定义游戏协议"场景验证偏少 | 面向未来，架构预留而非首发 |
 
 ### 3.2 结论与理由
@@ -79,7 +79,7 @@
 
 ### 3.3 为什么不是另外几个方案
 
-- **KCP**：弱网下延迟表现确实优于 TCP，是国内手游对战类的主流选择。但① 默认不加密，需要自己叠加安全层，工程上容易出纰漏；② Rust 生态的 KCP 实现远不如 tokio-rustls 成熟，缺少大规模生产验证；③ 如果不是强对抗 FPS/MOBA，这份复杂度大概率是不必要的技术负债。**结论：不在 MVP 阶段引入，作为第 18 节"按需接入的可选传输"。**
+- **KCP**：按 Issue #1 接入可选 kcp-ovo 0.5.1 字节流 + TLS1.3,默认关闭,不替换 TCP。弱网收益须按实际负载测量;TLS 保护应用内容但不认证 KCP 控制头,不宣称公网抗攻击能力。配置及完整限制见 README"可选 KCP/TLS 传输"。
 - **QUIC**：技术上更先进（内建 TLS1.3、多路复用无队头阻塞、连接迁移对移动端切网很友好），`quinn` 这个 Rust 实现也足够成熟。但作为"自定义游戏协议"而非"HTTP/3网页流量"使用时，生产验证案例仍偏少；部分网络环境（企业网络、部分移动运营商）对 UDP 限流是真实存在的风险。稳定性是本 PRD 排第一位的约束，因此**架构上要预留 Transport trait 让 QUIC 可以后接入（见 4.3、8.1），但不作为首发方案**。
 - **wss / nginx(wss)+tcp**：本质是"浏览器/H5 客户端的接入方式"，不是更优的传输层，需不需要取决于要不要支持网页端客户端。若需要，推荐做法见 8.6（不强制引入 nginx，可用 `tokio-tungstenite` 在同一 Rust 进程内直接监听 WSS，减少一跳延迟和运维复杂度；只有当未来要多实例做负载均衡/证书统一管理时，nginx/网关层才真正划算——这一点在第 18 节会再展开）。
 
@@ -409,18 +409,19 @@ Redis 客户端选型：使用官方文档推荐的 `redis` crate（redis-rs，�
 
 ### 8.1 连接生命周期与 Transport 抽象
 
-`net-kit` 定义一个 `Transport` trait，当前只有 `TcpTlsTransport` 一个实现，为未来 KCP/QUIC 预留：
+`net-kit` 定义 `Transport` trait,提供 `TcpTlsTransport` 与原始 `KcpTransport`;网关统一在原始接入、共享配额之后执行 TLS,避免未握手连接绕过准入：
 
 ```rust
 // crates/net-kit/src/transport.rs
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync {
     type Conn: AsyncRead + AsyncWrite + Send + Unpin;
-    async fn accept(&self) -> std::io::Result<Self::Conn>;
+    async fn accept(&self) -> std::io::Result<(Self::Conn, std::net::SocketAddr)>;
+    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr>;
 }
 ```
 
-连接建立流程：TCP accept → TLS 握手（`tokio-rustls`）→ 生成 `Session`（未鉴权状态）→ 启动读/写两个 tokio task。
+连接建立流程：TCP accept / 有界 KCP 会话 → 共享全局及单 IP 准入 → TLS1.3 握手 → 同一处理器生成 `Session` → Bind。TLS 与 Bind 使用一次绝对期限。KCP 收发字节流缓冲为 MTU × window,核心收发队列按窗口背压,UDP 队列与每 tick 输入预算受 queue_capacity 限制;关闭记录保留 idle 周期且计入 max_sessions。KCP flush 等待 ACK,关闭/取消不承诺未确认数据送达,停机 join 监听任务后再关数据库。
 
 ⚠️ **读写分离，避免用锁**：用 `tokio::io::split()` 把连接拆成读半部分和写半部分，读 task 负责解析入站消息并转发给对应用例；写 task 从一个专属的 `mpsc::channel` 里取出待发送消息写入 socket。这样"发消息给某个连接"只是"往它的 channel 里塞一条消息"，不需要在多个 task 间竞争同一把锁。
 
@@ -719,6 +720,15 @@ testcontainers = "0.23"
 | 配置项                           | 类型     | 默认值           | 说明                                                         |
 | -------------------------------- | -------- | ---------------- | ------------------------------------------------------------ |
 | `SERVER_TCP_BIND_ADDR`           | `String` | `"0.0.0.0:8080"` | TCP+TLS 监听地址（IP:端口）                                  |
+| `SERVER_TCP_ENABLED` | `bool` | `true` | 开启 TCP 游戏入口;TCP/KCP 至少一个开启 |
+| `SERVER_KCP_ENABLED` | `bool` | `false` | 开启 KCP+TLS,不影响 HTTPS |
+| `SERVER_KCP_BIND_ADDR` | `String` | `"0.0.0.0:8080"` | UDP IP:port |
+| `SERVER_KCP_MTU` | `u32` | `1200` | 576–1400,含 28B kcp-ovo 头 |
+| `SERVER_KCP_WINDOW` | `u16` | `64` | 非零收发窗口段数 |
+| `SERVER_KCP_INTERVAL_MS` | `u64` | `10` | 1–1000ms 更新周期 |
+| `SERVER_KCP_IDLE_TIMEOUT_SECS` | `u64` | `60` | 非零入站空闲超时,兼作关闭会话隔离期 |
+| `SERVER_KCP_MAX_SESSIONS` | `usize` | `1024` | 活跃/隔离会话总上限,非零 |
+| `SERVER_KCP_QUEUE_CAPACITY` | `usize` | `256` | 非零 UDP 队列/每 tick 输入预算 |
 | `SERVER_HTTP_BIND_ADDR`          | `String` | `"0.0.0.0:8081"` | HTTP (axum) 监听地址，用于登录/注册等                        |
 | `SERVER_WSS_BIND_ADDR`           | `String` | `"0.0.0.0:8082"` | WSS 监听地址（仅当启用 WSS 时有效）                          |
 | `SERVER_MAX_CONNECTIONS`         | `usize`  | `10000`          | 最大连接数,从 TLS 前准入开始计数（超出后拒绝新连接）       |
@@ -810,6 +820,15 @@ testcontainers = "0.23"
 # -------------------- 网络层 --------------------
 # TCP+TLS 监听地址（IP:端口）
 SERVER_TCP_BIND_ADDR=0.0.0.0:8080
+SERVER_TCP_ENABLED=true
+SERVER_KCP_ENABLED=false
+SERVER_KCP_BIND_ADDR=0.0.0.0:8080
+SERVER_KCP_MTU=1200
+SERVER_KCP_WINDOW=64
+SERVER_KCP_INTERVAL_MS=10
+SERVER_KCP_IDLE_TIMEOUT_SECS=60
+SERVER_KCP_MAX_SESSIONS=1024
+SERVER_KCP_QUEUE_CAPACITY=256
 
 # HTTP (axum) 监听地址（登录/注册等 REST API）
 SERVER_HTTP_BIND_ADDR=0.0.0.0:8081

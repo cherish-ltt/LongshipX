@@ -6,7 +6,7 @@
 
 **命名寓意**:Longship 是维京人的长船——木质龙骨历经风浪仍稳固耐航,寓意这套长连接游戏服务器**长长久久、稳定可靠**;"长船"与游戏服务器的立身之本"**长连接**"同名同源;"**X**"则是可自由组合的因子——接入 PostgreSQL、SeaORM、Redis,或将来切换 MySQL、更换传输协议,都只动出站适配器,业务核心分毫不变(得益于洋葱架构的端口 trait,见下文"从哪些文件逐步开发")。
 
-基于 **tokio + TCP/TLS 1.3** 的 Rust 长连接游戏服务器后端,采用 **DDD + 洋葱架构** 组织为 Cargo workspace 多 crate 单体(PRD:`prd.md`)。
+基于 **tokio + TCP/TLS 1.3**,支持可选 **KCP/TLS 1.3** 的 Rust 长连接游戏服务器后端,采用 **DDD + 洋葱架构** 组织为 Cargo workspace 多 crate 单体(PRD:`prd.md`)。
 
 当前版本: **v0.3.0**。修复清单、接口迁移与配置变化见 [v0.3.0 版本说明](docs/versions/v0.3.0.md)。
 
@@ -14,7 +14,7 @@
 
 面向中频实时玩法(回合制 / MMORPG / 卡牌 / 社交对战)的长连接服务端:
 
-* **传输**:TCP + rustls(TLS 1.3 only,ring 提供器),长度前缀帧 `[4B len u32 BE][2B opcode][protobuf payload]`;
+* **传输**:TCP 或 kcp-ovo 字节流 + rustls(TLS 1.3 only,ring 提供器),共享长度前缀帧 `[4B len u32 BE][2B opcode][protobuf payload]`;
 * **架构**:依赖方向永远指向 domain,crate 边界由编译器强制(见下文分层);
 * **并发模型**:每个 Room 一个 Actor task,串行处理命令、无锁;连接读写分离,发送队列有界(慢客户端直接断开);
 * **安全**:argon2id 密码哈希、opaque token(可立即吊销)、未鉴权连接限时限量、每连接令牌桶限流、日志脱敏;
@@ -46,7 +46,7 @@ migration/             SeaORM 迁移:accounts / players / audit_logs
 
 ## 快速开始
 
-环境要求:Rust 1.98.1(stable)、PostgreSQL 18、Redis、mkcert(本地证书)。
+环境要求:Rust 1.99.1(stable)、PostgreSQL 18、Redis、mkcert(本地证书)。
 
 ```bash
 # 1. 配置(示例已指向 ~/certs 下的 mkcert 开发证书,见 .public_env)
@@ -67,6 +67,44 @@ cargo run -p longshipx-server-bin
 框架自带两个"已完成实现"作参照:HTTP 注册/登录(见 `crates/gateway/src/http/routes.rs`)与 TCP 获取档案命令(见 `crates/gateway/src/tcp/handlers.rs` 的 `handle_get_profile`);可运行客户端示例:`cargo run -p longshipx-server-bin --example quickstart_client -- --token <token> --root-ca "$(mkcert -CAROOT)/rootCA.pem"`。
 
 ---
+
+## 可选 KCP/TLS 传输
+
+默认仍为 TCP-only,HTTPS 不变。两种游戏入口共享业务处理器、房间、token 存储、全局连接上限和单 IP 未鉴权配额;不是两套业务服务器。
+
+```bash
+# 双协议:在现有配置基础上启用 UDP;TCP/UDP 可以使用相同数字端口
+SERVER_KCP_ENABLED=true cargo run -p longshipx-server-bin
+# KCP-only:关闭游戏 TCP,不关闭 HTTPS
+SERVER_TCP_ENABLED=false SERVER_KCP_ENABLED=true cargo run -p longshipx-server-bin
+# 客户端仍需先经 HTTPS /login 取得 token,默认 --transport tcp
+cargo run -p longshipx-server-bin --example quickstart_client -- \
+  --transport kcp --server 127.0.0.1:8080 --token "$TOKEN" \
+  --root-ca "$(mkcert -CAROOT)/rootCA.pem"
+```
+
+| 环境变量 | 默认 | 约束/用途 |
+| --- | --- | --- |
+| `SERVER_TCP_ENABLED` / `SERVER_KCP_ENABLED` | `true` / `false` | 至少开启一种游戏传输 |
+| `SERVER_KCP_BIND_ADDR` | `0.0.0.0:8080` | UDP IP:port,支持 IPv4/IPv6 |
+| `SERVER_KCP_MTU` | `1200` | 576–1400 字节,含 kcp-ovo 28B 头 |
+| `SERVER_KCP_WINDOW` | `64` | 1–65535,双方收发窗口段数;双方应配置兼容 MTU |
+| `SERVER_KCP_INTERVAL_MS` | `10` | 1–1000ms,更新/重传周期 |
+| `SERVER_KCP_IDLE_TIMEOUT_SECS` | `60` | 无有效入站 KCP 包时结束;应大于业务心跳间隔 |
+| `SERVER_KCP_MAX_SESSIONS` | `1024` | 活跃及关闭隔离记录合计上限,大于 0 |
+| `SERVER_KCP_QUEUE_CAPACITY` | `256` | 每会话 UDP 入站队列及每 tick 输入预算,大于 0;溢出断会话 |
+
+安全与兼容边界:
+
+- 网关强制 **TLS 1.3 over KCP**,客户端验证 CA 与主机名,之后才允许 Bind;不提供默认明文 token 路径,不启用 0-RTT。示例验证 `localhost`,生产客户端须验证真实服务名。
+- `kcp-ovo =0.5.1` 底层 stream-mode 使用 28B 大端头;不兼容标准 KCP 24B 头或上游高层消息 API,客户端应使用本仓库 `KcpStream` 加 TLS。无自动选路、NAT 迁移或 QUIC。
+- TLS 保护应用内容,**不认证外层 KCP 头/ACK**。伪造、重复及重放 UDP 包仍可能影响可用性;有界队列不是公网抗 DDoS。接入前即占 KCP session 槽,生产需另配 UDP 防火墙/限速。
+- `write` 仅进入本地有界缓冲,`flush` 等待 KCP 累积 ACK,不是对端应用处理确认;被伪造的 ACK 也不构成可信送达证明。drop/强制断开可能丢未确认数据;停机写排空受现有期限控制。
+- 无 KCP FIN;正常 TLS close_notify 或本地 idle/心跳期限结束连接。关闭的 `(peer, conv)` 隔离一个 idle 周期,防迟到包复活,占用 session 槽;高频重连可能先到此限制。新连接使用随机 conv,不承诺无限重连吞吐。
+- Rust/MSRV/CI 统一 **1.99.1**,Tokio **1.52.3**,锁文件 bytes **1.11.1** / log **0.4.29**。初测 0.5.0 的全局 allocator 冲突已由上游 [#36](https://github.com/cherish-ltt/kcp-ovo/issues/36) / [#37](https://github.com/cherish-ltt/kcp-ovo/pull/37) 修复,最终锁定 **0.5.1**,不强制改变应用分配器。本次没有修改上游。
+- 保留原有 System 计数分配器及泄漏阈值;压力测试统计同进程两端的活跃申请字节与RSS。不同档位会复用堆,不可据 RSS 差值宣称每连接占用更小。
+
+复跑单元、黑盒、冒烟、压力和性能结果见 [KCP 集成验证记录](docs/testing/kcp-integration.md)。公网弱网和生产容量仍须部署侧验收,不预设 KCP 更快。
 
 ## 开发指南:亲手实现"注册角色(HTTP)"与"获取角色信息(TCP 命令)"
 
@@ -337,7 +375,9 @@ HTTP 308 跳转保留请求主机、路径和查询,将明文端口替换为实�
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint
 cargo test --workspace                      # 单元测试 + TCP/TLS 端到端(无需数据库)
-cargo llvm-cov --workspace --summary-only   # 覆盖率
+PATH="$(rustc --print sysroot)/bin:$HOME/.cargo/bin:$PATH" \
+CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_OPT_LEVEL=0 CARGO_PROFILE_TEST_OPT_LEVEL=0 RUSTC_WRAPPER= \
+  cargo llvm-cov --workspace --summary-only --locked # 无优化覆盖率,避免 LLVM 函数数据不匹配
 ```
 
 * 单元测试全部可离线运行;SeaORM/Redis 具体实现需要真实服务,不在单测中覆盖;

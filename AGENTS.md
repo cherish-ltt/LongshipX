@@ -70,7 +70,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          toolchain: "1.99.1"
           components: rustfmt, clippy
 
       - name: Show rustup info
@@ -166,7 +166,7 @@ cognitive-complexity-threshold = 15
 too-many-arguments-threshold = 5
 too-many-lines-threshold = 30
 allow-unwrap-in-tests = true
-msrv = "1.95.0"
+msrv = "1.99.1"
 ```
 
 所有代码必须通过 `cargo clippy --all-targets -- -D warnings` 检查，无警告。
@@ -216,7 +216,7 @@ msrv = "1.95.0"
 
 - **保持本文件（AGENTS.md）更新**：每次修正代码或引入新规范后，请同步更新此文档。
 - **所有变更**必须通过 CI 检查（格式、lint、构建、测试）。
-- **版本锁定**：工具链版本统一使用 Rust 1.98.1（如 CI 和 clippy 配置所示）。
+- **版本锁定**：工具链版本统一使用 Rust 1.99.1（如 CI 和 clippy 配置所示）。
 - **遵循设计**：改动必须遵循原有结构设计，不得私自添加和修改，除非用户发出明确重构指令。
 - **后续开发追加 AGENTS.md 内容**：写入第 10 章节。
 - **测试**：编写单元测试，如果已经安装`cargo-llvm-cov`则检测测试覆盖率>=80%。
@@ -252,7 +252,7 @@ msrv = "1.95.0"
 
 - 默认测试必须可离线运行(不依赖 PG/Redis/容器);真实 PostgreSQL/Redis 回归位于 `crates/infrastructure/tests/`,默认忽略,仅在显式提供独立测试库时执行,禁止指向业务库。
 - 端到端测试(`crates/gateway/tests/e2e.rs`、`tests/http.rs`)使用 rcgen 自签证书走真实 TLS,是协议/鉴权/房间链路的验收基线,改协议或网关后必须先跑。
-- 覆盖率命令:`cargo llvm-cov --workspace --summary-only`;v0.3.0 修复组合基线:全仓行覆盖 89.99%(5096/5663),真实 PostgreSQL/Redis 回归另行执行、不计入该覆盖率,server-bin 启动序列未覆盖。不得使核心 crate 覆盖率显著回落。
+- 覆盖率命令见 README:使用原生工具链 PATH、无优化/增量、干净覆盖目录,绕开环境中的 mbx/sccache;不可用有函数数据不匹配或同一源码绝对/相对路径重复的报告验收。v0.3.0 历史行覆盖89.99%,真实 PostgreSQL/Redis 回归不计入,不得使核心 crate 覆盖率显著回落。
 - 覆盖率工具链:`cargo-llvm-cov` + `rustup component add llvm-tools-preview`。
 
 ### 10.5 网络层约定(net-kit)
@@ -348,3 +348,11 @@ msrv = "1.95.0"
 
 - 绑定身份不是永久授权:入站业务分发与房间数据出站前必须重新校验会话,存储失败和超时 fail closed;令牌不得进入 Debug。
 - 会话失效结束连接并执行离房清理,翻译 task 结束必须被主循环观察;覆盖撤销、过期、多个绑定连接、玩家隔离、存储错误和停顿。
+
+### 10.24 KCP 接入与测试
+
+- 游戏传输默认 TCP-only;可选 kcp-ovo 0.5.1 底层 stream-mode + TLS 1.3,不使用上游消息式高层 API,禁止裸 KCP 分发应用消息。domain/application/protobuf 不因传输变化而复制或改写。
+- TCP/KCP 共享全局准入与单 IP 未鉴权配额、TLS/Bind 绝对期限及会话校验;KCP session/输入/发送缓冲必须有界,过载显式断会话。
+- `flush` 等待 KCP ACK 而非应用确认;无 wire FIN,关闭记录隔离一个 idle 周期且计入 session 上限,迟到包不能立刻复活会话。TLS 不保护 KCP 控制头,不得将其描述为防 DDoS 或可信 ACK。
+- 工具链/MSRV/CI 统一 Rust 1.99.1,Tokio 精确 1.52.3。使用已移除强制全局 allocator 的 kcp-ovo 0.5.1;保留 System 计数分配器及泄漏回归,不引入分配器特定 FFI。
+- 网络变更必须执行 TCP/KCP e2e、默认离线全仓测试;CI 另跑显式 bounded stress。64/256 连接压力和 20ms 单向用户态代理结果分开记录,用户态 TCP 转发延迟不等同内核丢包仿真。
