@@ -305,6 +305,8 @@ TCP 接入在 TLS 前占用全局连接名额与单 IP 未鉴权配额;`SERVER_U
 
 `RoomService::leave/leave_all` 等待有界命令队列容量及 Actor 离房完成回执,返回成功时成员清理已执行;最后成员离开后立即移除房间注册项,不依赖后续请求触发惰性回收。`RoomCommand::Leave` 新增完成回执字段。
 
+accept worker 持续回收已经结束的连接 task,记录异常退出,历史连接数量不再累积 JoinSet 分配;连接并发上限不变。
+
 
 ```bash
 cargo fmt --all -- --check                  # 格式
