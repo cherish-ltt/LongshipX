@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub struct ConnectionRegistry {
-    conns: Mutex<HashMap<Uuid, OutboundSender>>,
+    conns: Mutex<HashMap<Uuid, Option<OutboundSender>>>,
 }
 
 impl ConnectionRegistry {
@@ -18,11 +18,17 @@ impl ConnectionRegistry {
     }
 
     pub fn register(&self, conn_id: Uuid, sender: OutboundSender) {
-        self.conns.lock().insert(conn_id, sender);
+        self.conns.lock().insert(conn_id, Some(sender));
     }
 
     pub fn remove(&self, conn_id: Uuid) -> Option<OutboundSender> {
-        self.conns.lock().remove(&conn_id)
+        self.conns.lock().remove(&conn_id).flatten()
+    }
+
+    pub(crate) fn begin_drain(&self, conn_id: Uuid) {
+        if let Some(sender) = self.conns.lock().get_mut(&conn_id) {
+            sender.take();
+        }
     }
 
     pub fn active_count(&self) -> usize {
@@ -46,6 +52,7 @@ impl ConnectionRegistry {
         let conns = self.conns.lock();
         conns
             .values()
+            .flatten()
             .filter(|sender| sender.try_send_frame(frame.clone()).is_ok())
             .count()
     }

@@ -39,6 +39,7 @@ type TlsHalf = (
 
 fn bench_config() -> ConnectionConfig {
     ConnectionConfig {
+        write_drain_timeout: std::time::Duration::from_secs(1),
         max_frame_size: MAX_FRAME_SIZE,
         send_queue_capacity: QUEUE_CAPACITY,
     }

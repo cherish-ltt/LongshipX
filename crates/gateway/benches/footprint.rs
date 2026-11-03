@@ -106,6 +106,8 @@ fn resident_bytes() -> u64 {
 
 fn bench_config(addr: std::net::SocketAddr) -> TcpGatewayConfig {
     TcpGatewayConfig {
+        shutdown_timeout: Duration::from_secs(1),
+        write_drain_timeout: Duration::from_millis(50),
         bind_addr: addr,
         max_frame_size: MAX_FRAME_SIZE,
         send_queue_capacity: 4096,

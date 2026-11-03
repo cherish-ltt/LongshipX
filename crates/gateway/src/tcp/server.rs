@@ -56,30 +56,37 @@ impl TcpGateway {
             .map_err(|err| crate::error::GatewayError::Net(err.into()))
     }
 
-    /// 运行 accept 循环直到收到停机信号;退出后向在线连接广播维护通知(PRD 13.2)。
+    /// 运行 accept 循环直到收到停机信号;停止接入并通知在线连接退出(PRD 13.2)。
     pub async fn run(&self, shutdown: watch::Receiver<bool>) {
         let deps = self.deps.clone();
         let config = self.config;
+        let connections_shutdown = shutdown.clone();
         let transport = self.transport.clone();
         let handshakes = Arc::new(tokio::sync::Semaphore::new(
             config.accept_concurrency.max(1) as usize,
         ));
         let handler = move |stream: tokio::net::TcpStream, peer: std::net::SocketAddr| {
             let deps = deps.clone();
+            let mut shutdown = connections_shutdown.clone();
             let transport = transport.clone();
             let handshakes = handshakes.clone();
             async move {
-                let Some(admission) =
-                    handler::Admission::acquire(&deps, peer, config.unauth_timeout)
-                else {
+                let Some(admission) = handler::Admission::acquire(
+                    &deps,
+                    peer,
+                    config.unauth_timeout,
+                    shutdown.clone(),
+                ) else {
                     return;
                 };
                 let Ok(slot) = handshakes.try_acquire_owned() else {
                     tracing::debug!(%peer, "TLS 握手并发已达上限,拒绝");
                     return;
                 };
-                let result =
-                    tokio::time::timeout_at(admission.deadline, transport.handshake(stream)).await;
+                let result = tokio::select! {
+                    _ = async { let _ = shutdown.wait_for(|stop| *stop).await; } => return,
+                    result = tokio::time::timeout_at(admission.deadline, transport.handshake(stream)) => result,
+                };
                 drop(slot);
                 let stream = match result {
                     Ok(Ok(stream)) => stream,
@@ -98,6 +105,7 @@ impl TcpGateway {
         accept_loop_with(
             Arc::new(RawTcp(self.transport.clone())),
             AcceptLoopConfig {
+                shutdown_timeout: self.config.shutdown_timeout,
                 max_concurrent: Some(self.config.max_connections),
                 accept_concurrency: self.config.accept_concurrency.max(1) as usize,
             },
@@ -105,8 +113,9 @@ impl TcpGateway {
             handler,
         )
         .await;
-        let notified = self.broadcast_shutdown("服务器即将维护,请保存进度并重连");
-        tracing::info!(notified, "已向在线连接广播停机通知");
+        if !self.wait_until_drained(self.config.shutdown_timeout).await {
+            tracing::error!("connection cleanup did not finish before shutdown deadline");
+        }
     }
 
     /// 优雅停机第一拍:向所有在线连接广播维护通知(PRD 13.2)。

@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 /// 连接级参数(来自环境变量配置,PRD 18.1)。
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionConfig {
+    pub write_drain_timeout: std::time::Duration,
     /// 单帧长度上限(字节)。
     pub max_frame_size: usize,
     /// 发送队列容量(有界,PRD 8.5 🔴)。
@@ -32,7 +33,7 @@ impl<S: AsyncRead + Unpin> FrameReader<S> {
 }
 
 /// 拆分连接:返回读半部、发送端与写 task 句柄。
-/// 写 task 在发送端全部关闭后自然退出(队列关闭 → socket 关闭)。
+/// 最后发送端关闭后按 write_drain_timeout 有限排空,随后释放 socket 写半部。
 pub fn split_connection<S>(
     io: S,
     config: ConnectionConfig,
@@ -45,14 +46,16 @@ where
     let outbound = OutboundSender::new(tx);
     let mut disconnected = outbound.disconnect_signal();
     let writer = tokio::spawn(async move {
+        let work = write_task(write_half, rx, config.max_frame_size);
+        tokio::pin!(work);
         tokio::select! {
             biased;
-            _ = async {
-                if disconnected.wait_for(|closed| *closed).await.is_err() {
-                    std::future::pending::<()>().await;
+            senders_dropped = async { disconnected.wait_for(|closed| *closed).await.is_err() } => {
+                if senders_dropped && tokio::time::timeout(config.write_drain_timeout, work).await.is_err() {
+                    tracing::debug!("writer drain deadline exceeded");
                 }
-            } => {},
-            _ = write_task(write_half, rx, config.max_frame_size) => {},
+            },
+            _ = &mut work => {},
         }
     });
     (
@@ -96,6 +99,7 @@ mod tests {
     use std::time::Duration;
 
     const CONFIG: ConnectionConfig = ConnectionConfig {
+        write_drain_timeout: Duration::from_millis(50),
         max_frame_size: 1024,
         send_queue_capacity: 4,
     };
@@ -137,6 +141,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_sender_flushes_queued_frame_for_reading_peer() {
+        let (local, mut peer) = tokio::io::duplex(512);
+        let (_reader, sender, writer) = split_connection(local, CONFIG);
+        sender.try_send_frame(Frame::new(1, vec![7; 128])).unwrap();
+        drop(sender);
+        let frame = tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::codec::read_frame(&mut peer, 1024),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert_eq!(frame.payload, vec![7; 128]);
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn explicit_disconnect_cancels_blocked_socket_write() {
         let (client, _server) = tokio::io::duplex(1);
         let (_reader, sender, writer) = split_connection(client, CONFIG);
@@ -161,5 +183,28 @@ mod tests {
             "入队本身不受帧长限制"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    #[tokio::test]
+    async fn writer_stops_after_senders_drop_even_when_peer_does_not_read() {
+        let (local, _peer) = tokio::io::duplex(1);
+        let (_reader, sender, mut writer) = split_connection(
+            local,
+            ConnectionConfig {
+                write_drain_timeout: Duration::from_millis(50),
+                max_frame_size: 1024,
+                send_queue_capacity: 1,
+            },
+        );
+        sender.try_send_frame(Frame::new(1, vec![0; 128])).unwrap();
+        tokio::task::yield_now().await;
+        drop(sender);
+        let completed = tokio::time::timeout(std::time::Duration::from_millis(200), &mut writer)
+            .await
+            .is_ok();
+        writer.abort();
+        assert!(
+            completed,
+            "writer remains blocked after every sender was dropped"
+        );
     }
 }

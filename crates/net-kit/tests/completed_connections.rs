@@ -47,6 +47,7 @@ async fn completed_connections_must_not_accumulate_task_allocations() {
     let server = tokio::spawn(accept_loop_with(
         Arc::new(FakeTransport(tokio::sync::Mutex::new(rx))),
         AcceptLoopConfig {
+            shutdown_timeout: std::time::Duration::from_secs(1),
             max_concurrent: Some(16),
             accept_concurrency: 1,
         },

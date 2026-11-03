@@ -58,7 +58,9 @@ mkcert -cert-file ~/certs/localhost.pem -key-file ~/certs/localhost-key.pem loca
 cargo run -p longshipx-server-bin
 ```
 
-> 配置路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`)。
+> TLS 证书和私钥路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`),要求非空 `HOME`;绝对路径与普通相对路径保持原义,不执行 shell 展开。
+
+连接发送队列与房间命令队列容量必须大于 0;`SERVER_CHANNEL_PER_ROOM_SIZE=0` 会在启动配置校验时明确报错,不会延迟至首次建房。
 
 框架自带两个"已完成实现"作参照:HTTP 注册/登录(见 `crates/gateway/src/http/routes.rs`)与 TCP 获取档案命令(见 `crates/gateway/src/tcp/handlers.rs` 的 `handle_get_profile`);可运行客户端示例:`cargo run -p longshipx-server-bin --example quickstart_client -- --token <token> --root-ca "$(mkcert -CAROOT)/rootCA.pem"`。
 
@@ -286,26 +288,26 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
-注册审计的 `detail.username` 保存与账号一致的归一化用户名,`player_id` 单独关联玩家;审计不记录密码或令牌。
-注册使用 `RegistrationStore` 原子创建账号与玩家档案,数据库错误或提交前取消会回滚整个事务;并发同名注册返回冲突。`RegisterUseCase::new` 第二个参数改为注册存储,生产使用 `SeaRegistrationStore`,内存装置使用 `InMemoryRegistrationStore`。提交结果因连接中断未知时,重试仍可能返回用户名冲突,不会新增半套数据。
-
-真实 PostgreSQL 回归须指定专用测试库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test registration -- --ignored`。测试会执行迁移并临时添加故障约束,禁止指向业务数据库。
-
-经验更新通过 `PlayerRepository::gain_exp` 原子读取并提交;登录使用 `record_login` 只更新登录时间,不再保存陈旧玩家快照。外部仓储实现须实现这两个方法。升级事件仅在提交后发布;发布失败返回 `AppError::PostCommit`,调用方不得重试整个经验奖励。未引入 outbox,发布失败仍需要业务侧补发。
-
-真实 PostgreSQL 回归使用专用库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test player_updates -- --ignored`;测试执行迁移及故障约束,禁止连接业务库。
-
-登录签发 token 时由存储原子替换该玩家的旧会话,并发登录完成后最多一个 token 有效。替换失败不返回登录成功;网络超时或取消可能发生在提交之后,此时重试会再次替换会话。Redis 使用单实例 Lua 脚本,不支持跨槽 Redis Cluster。
-
-真实 Redis 回归使用独立测试库:`LONGSHIPX_TEST_REDIS_URL=redis://127.0.0.1:6379/15 cargo test -p longshipx-infrastructure --test session_tokens -- --ignored`;默认测试不连接真实服务。
+`RoomService::leave/leave_all` 等待有界命令队列容量及 Actor 离房完成回执,返回成功时成员清理已执行;最后成员离开后立即移除房间注册项,不依赖后续请求触发惰性回收。`RoomCommand::Leave` 新增完成回执字段。
 
 TCP 绑定后每次入站业务请求及房间广播都会重新校验原会话 token;撤销、过期、存储错误或校验超过心跳超时均关闭连接,不再永久信任缓存身份。校验前已接收的请求/已入发送队列的数据不会撤回;无流量连接最迟在心跳超时清理。令牌仅私有保存,不输出到 Debug。
 
 TCP 接入在 TLS 前占用全局连接名额与单 IP 未鉴权配额;`SERVER_UNAUTH_TIMEOUT_SECS` 是从 TCP 准入到 Bind 完成的一次性期限,包含 TLS 握手和存储查询,无效 Bind 不续期。`SERVER_ACCEPT_CONCURRENCY` 限制并行 TLS 握手,满时拒绝额外接入;错误/取消/超时自动归还未鉴权名额。
-
-`RoomService::leave/leave_all` 等待有界命令队列容量及 Actor 离房完成回执,返回成功时成员清理已执行;最后成员离开后立即移除房间注册项,不依赖后续请求触发惰性回收。`RoomCommand::Leave` 新增完成回执字段。
-
 accept worker 持续回收已经结束的连接 task,记录异常退出,历史连接数量不再累积 JoinSet 分配;连接并发上限不变。
+单 TCP 连接同时仅在一个房间:加入后再次创建或加入其他房间返回冲突,必须先显式离开;重复加入当前房间保持幂等且不重复广播。拒绝切换不会丢失当前成员身份。
+
+登录签发 token 时由存储原子替换该玩家的旧会话,并发登录完成后最多一个 token 有效。替换失败不返回登录成功;网络超时或取消可能发生在提交之后,此时重试会再次替换会话。Redis 使用单实例 Lua 脚本,不支持跨槽 Redis Cluster。
+
+真实 Redis 回归使用独立测试库:`LONGSHIPX_TEST_REDIS_URL=redis://127.0.0.1:6379/15 cargo test -p longshipx-infrastructure --test session_tokens -- --ignored`;默认测试不连接真实服务。
+注册使用 `RegistrationStore` 原子创建账号与玩家档案,数据库错误或提交前取消会回滚整个事务;并发同名注册返回冲突。`RegisterUseCase::new` 第二个参数改为注册存储,生产使用 `SeaRegistrationStore`,内存装置使用 `InMemoryRegistrationStore`。提交结果因连接中断未知时,重试仍可能返回用户名冲突,不会新增半套数据。
+
+真实 PostgreSQL 回归须指定专用测试库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test registration -- --ignored`。测试会执行迁移并临时添加故障约束,禁止指向业务数据库。
+经验更新通过 `PlayerRepository::gain_exp` 原子读取并提交;登录使用 `record_login` 只更新登录时间,不再保存陈旧玩家快照。外部仓储实现须实现这两个方法。升级事件仅在提交后发布;发布失败返回 `AppError::PostCommit`,调用方不得重试整个经验奖励。未引入 outbox,发布失败仍需要业务侧补发。
+
+真实 PostgreSQL 回归使用专用库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test player_updates -- --ignored`;测试执行迁移及故障约束,禁止连接业务库。
+
+注册审计的 `detail.username` 保存与账号一致的归一化用户名,`player_id` 单独关联玩家;审计不记录密码或令牌。
+HTTP 308 跳转保留请求主机、路径和查询,将明文端口替换为实际 HTTPS 监听端口(443 省略);非法或缺失 Host 返回 400。`redirect_router` / `serve_redirect` 调用方须传入 HTTPS 端口。
 
 
 ```bash
@@ -351,6 +353,12 @@ cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 
 * CI(GitHub Actions)执行 `fmt --check` / `clippy -D warnings` / `build` / `test`,见 `.github/workflows/rust-ci.yml`;
 * 提交前请本地跑通上述"开发与测试"命令。
 
+## 房间队列过载
+
+Actor 事件队列与 socket 出站队列都采用满即断开策略（包括聊天），不静默丢失关键回执后继续会话。
+`RoomEventSink` 持有独立且持久的失败信号；网关观察该信号并关闭写任务、清理连接。
+应用层调用者应保留 sink 并观察 `failed()`，原 `mpsc::Sender<RoomEvent>` 可通过 `into()` 适配。
+`OutboundSender` 一旦溢出即永久不可写，即使旧帧随后被消费也不会恢复。
 ## 密码计算并发
 
 注册/登录的 Argon2 运算在阻塞线程池运行，不占用异步调度线程。
@@ -358,12 +366,13 @@ cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 
 超限立即返回 HTTP 503，不累积等待队列。请求取消不会提前释放仍在计算的名额。
 `PasswordHasher` 端口改为异步，`Argon2PasswordHasher::new` 第四参数为并发上限。
 
-## 房间队列过载
+## 连接停机与排空
 
-Actor 事件队列与 socket 出站队列都采用满即断开策略（包括聊天），不静默丢失关键回执后继续会话。
-`RoomEventSink` 持有独立且持久的失败信号；网关观察该信号并关闭写任务、清理连接。
-应用层调用者应保留 sink 并观察 `failed()`，原 `mpsc::Sender<RoomEvent>` 可通过 `into()` 适配。
-`OutboundSender` 一旦溢出即永久不可写，即使旧帧随后被消费也不会恢复。
+停机先停止 accept，连接在正在执行的请求结束后发出维护通知并离房，再有限排空写队列。
+`APP_SHUTDOWN_TIMEOUT_SECS` 控制处理器的协作退出期限；超时才取消处理器，RAII 清理其子任务、注册表与鉴权配额，并补发房间清理。
+`SERVER_WRITE_DRAIN_TIMEOUT_MS` 默认 1000，限制发送端全部关闭后 socket 写任务的排空时间；0 表示不等待排空。
+`TcpGatewayConfig` 新增 `shutdown_timeout`/`write_drain_timeout`，`ConnectionConfig` 新增 `write_drain_timeout`，`AcceptLoopConfig` 新增 `shutdown_timeout`。
+强制期限不保证尚未提交的业务完成；卡住的自定义房间事件发布器会在清理超时时记录错误，不能视为可靠投递。
 
 ## License
 
