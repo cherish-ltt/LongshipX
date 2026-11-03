@@ -5,6 +5,16 @@ use async_trait::async_trait;
 use longshipx_domain::{DomainEvent, PlayerId};
 use std::time::Duration;
 
+/// 原子创建账号及玩家档案;任一步失败不得留下部分注册数据。
+#[async_trait]
+pub trait RegistrationStore: Send + Sync {
+    async fn register(
+        &self,
+        account: &longshipx_domain::Account,
+        player: &longshipx_domain::Player,
+    ) -> Result<(), AppError>;
+}
+
 /// 会话令牌存储:不透明随机 token + 服务端存储,支持立即吊销(PRD 6.1/10)。
 #[async_trait]
 pub trait SessionTokenStore: Send + Sync {

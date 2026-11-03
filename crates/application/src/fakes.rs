@@ -254,3 +254,22 @@ impl AuditLogger for FakeAudit {
         Ok(())
     }
 }
+
+pub struct FakeRegistration(
+    pub std::sync::Arc<FakeAccounts>,
+    pub std::sync::Arc<FakePlayers>,
+);
+
+#[async_trait]
+impl crate::ports::RegistrationStore for FakeRegistration {
+    async fn register(&self, account: &Account, player: &Player) -> Result<(), AppError> {
+        let mut accounts = self.0.inner.lock().unwrap();
+        let mut players = self.1.inner.lock().unwrap();
+        if accounts.contains_key(account.username().as_str()) {
+            return Err(AppError::Conflict("用户名已被占用".into()));
+        }
+        accounts.insert(account.username().as_str().to_string(), account.clone());
+        players.insert(player.id().0, player.clone());
+        Ok(())
+    }
+}

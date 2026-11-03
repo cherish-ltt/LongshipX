@@ -14,7 +14,7 @@ use longshipx_infrastructure::cache::{InMemoryTokenStore, RedisTokenStore};
 use longshipx_infrastructure::config::{Config, DatabaseConfig, TlsConfig};
 use longshipx_infrastructure::password::Argon2PasswordHasher;
 use longshipx_infrastructure::persistence::repositories::{
-    SeaAccountRepository, SeaAuditLogger, SeaPlayerRepository,
+    SeaAccountRepository, SeaAuditLogger, SeaPlayerRepository, SeaRegistrationStore,
 };
 use longshipx_protocol::GameCodec;
 use std::error::Error;
@@ -109,6 +109,7 @@ fn build_services(
     let db = Arc::new(db);
     let accounts = Arc::new(SeaAccountRepository::new(db.clone()));
     let players = Arc::new(SeaPlayerRepository::new(db.clone()));
+    let registration = Arc::new(SeaRegistrationStore::new(db.clone()));
     let audit = Arc::new(SeaAuditLogger::new(db));
     let (memory_kb, iterations, parallelism) = config.app.password_params();
     let hasher = Arc::new(Argon2PasswordHasher::new(
@@ -127,7 +128,7 @@ fn build_services(
     ));
     let register = Arc::new(RegisterUseCase::new(
         accounts.clone(),
-        players.clone(),
+        registration,
         hasher.clone(),
         audit.clone(),
     ));
