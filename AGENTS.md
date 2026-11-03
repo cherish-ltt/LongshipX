@@ -296,3 +296,9 @@ msrv = "1.95.0"
 - 变更记录位于 `docs/versions/`,**每个发布版本一个独立 Markdown 文件**,命名为 `vX.Y.Z.md`(如 `v0.1.0.md`、`v0.2.0.md`);不再维护单一 CHANGELOG 文件。
 - 版本文件按 Keep a Changelog 风格以 `Changed` / `Added` / `Fixed` / `Removed` 等小节记录用户可感知的变更;**发布新版本时新建对应文件**,与版本号改动在同一发布批次提交。
 - 发布流程:新增 `docs/versions/vX.Y.Z.md` + 版本号同步(`chore: 版本更新至 X.Y.Z`)→ 打注解 tag `vX.Y.Z` → push 分支与 tag。
+
+
+### 10.11 玩家更新与事件
+
+- 玩家成长必须使用原子 `gain_exp`,登录只用 `record_login` 更新登录时间;不能用读出的完整快照覆盖并发变更。
+- 升级事件在持久化提交后发布;发布失败报告 PostCommit,禁止以重试整个用例补发。真实数据库测试须覆盖并发奖励和失败写入。

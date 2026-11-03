@@ -21,6 +21,8 @@ pub enum AppError {
     RateLimited,
     #[error("存储故障: {0}")]
     Storage(String),
+    #[error("数据已提交,事件发布失败,请勿重试整个操作: {0}")]
+    PostCommit(String),
     #[error("内部错误: {0}")]
     Internal(String),
 }

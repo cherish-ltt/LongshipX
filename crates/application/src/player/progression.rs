@@ -25,21 +25,21 @@ impl GainExpUseCase {
         if amount == 0 {
             return Err(AppError::Validation("经验值必须大于 0".into()));
         }
-        let mut player = self
+        let (player, new_level) = self
             .players
-            .find_by_id(player_id)
+            .gain_exp(player_id, amount)
             .await?
             .ok_or_else(|| AppError::NotFound("玩家不存在".into()))?;
-        if let Some(new_level) = player.gain_exp(amount) {
+        if let Some(new_level) = new_level {
             self.events
                 .publish(DomainEvent::PlayerLeveledUp {
                     player_id,
                     new_level,
                     at: Utc::now(),
                 })
-                .await?;
+                .await
+                .map_err(|err| AppError::PostCommit(err.to_string()))?;
         }
-        self.players.save(&player).await?;
         Ok(PlayerProfile::from(&player))
     }
 }
@@ -119,5 +119,37 @@ mod tests {
             use_case.execute(PlayerId(uuid::Uuid::now_v7()), 10).await,
             Err(AppError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn publication_observes_committed_state_and_failure_is_post_commit() {
+        struct FailedEvents(Arc<FakePlayers>);
+        #[async_trait::async_trait]
+        impl EventPublisher for FailedEvents {
+            async fn publish(&self, event: DomainEvent) -> Result<(), AppError> {
+                let DomainEvent::PlayerLeveledUp {
+                    player_id,
+                    new_level,
+                    ..
+                } = event
+                else {
+                    panic!("level event");
+                };
+                assert_eq!(
+                    self.0.find_by_id(player_id).await.unwrap().unwrap().level(),
+                    new_level
+                );
+                Err(AppError::Internal("publish failed".into()))
+            }
+        }
+        let (players, id) = fixture().await;
+        let use_case =
+            GainExpUseCase::new(players.clone(), Arc::new(FailedEvents(players.clone())));
+        assert!(matches!(
+            use_case.execute(id, 100).await,
+            Err(AppError::PostCommit(_))
+        ));
+        let saved = players.find_by_id(id).await.unwrap().unwrap();
+        assert_eq!((saved.level(), saved.exp()), (2, 0));
     }
 }

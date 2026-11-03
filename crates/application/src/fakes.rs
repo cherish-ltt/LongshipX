@@ -131,6 +131,32 @@ impl FakePlayers {
 
 #[async_trait]
 impl PlayerRepository for FakePlayers {
+    async fn gain_exp(
+        &self,
+        id: PlayerId,
+        amount: u64,
+    ) -> Result<Option<(Player, Option<u32>)>, RepoError> {
+        let mut players = self.inner.lock().expect("player repo 锁中毒");
+        let Some(player) = players.get_mut(&id.0) else {
+            return Ok(None);
+        };
+        let level = player.gain_exp(amount);
+        Ok(Some((player.clone(), level)))
+    }
+
+    async fn record_login(
+        &self,
+        id: PlayerId,
+        at: chrono::DateTime<Utc>,
+    ) -> Result<Option<Player>, RepoError> {
+        let mut players = self.inner.lock().expect("player repo 锁中毒");
+        let Some(player) = players.get_mut(&id.0) else {
+            return Ok(None);
+        };
+        player.record_login(at);
+        Ok(Some(player.clone()))
+    }
+
     async fn find_by_id(&self, id: PlayerId) -> Result<Option<Player>, RepoError> {
         Ok(self.inner.lock().unwrap().get(&id.0).cloned())
     }

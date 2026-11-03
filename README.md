@@ -286,6 +286,11 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+经验更新通过 `PlayerRepository::gain_exp` 原子读取并提交;登录使用 `record_login` 只更新登录时间,不再保存陈旧玩家快照。外部仓储实现须实现这两个方法。升级事件仅在提交后发布;发布失败返回 `AppError::PostCommit`,调用方不得重试整个经验奖励。未引入 outbox,发布失败仍需要业务侧补发。
+
+真实 PostgreSQL 回归使用专用库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test player_updates -- --ignored`;测试执行迁移及故障约束,禁止连接业务库。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint
