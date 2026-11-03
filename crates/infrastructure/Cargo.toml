@@ -33,7 +33,7 @@ tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-# 真实 PostgreSQL 回归复用生产迁移
+# 真实存储回归复用生产迁移
 longshipx-migration = { workspace = true }
 # 异步单测(含暂停时钟的过期测试)
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

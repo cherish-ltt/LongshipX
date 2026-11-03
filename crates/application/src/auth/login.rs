@@ -30,9 +30,13 @@ impl LoginUseCase {
             return Err(AppError::Unauthorized("用户名或密码错误".into()));
         }
 
-        let mut player = self.load_player(account.id()).await?;
-        player.record_login(chrono::Utc::now());
-        self.players_save(&player).await?;
+        let player = self.load_player(account.id()).await?;
+        let player = self
+            .deps
+            .players
+            .record_login(player.id(), chrono::Utc::now())
+            .await?
+            .ok_or_else(|| AppError::Internal("账号缺少对应的玩家档案".into()))?;
 
         // 单会话策略:登录即吊销该玩家历史 token(支持"顶号下线",PRD 6.1)。
         if let Err(err) = self.deps.tokens.revoke_player(player.id()).await {
@@ -74,10 +78,6 @@ impl LoginUseCase {
             .find_by_account(account)
             .await?
             .ok_or_else(|| AppError::Internal("账号缺少对应的玩家档案".into()))
-    }
-
-    async fn players_save(&self, player: &longshipx_domain::Player) -> Result<(), AppError> {
-        Ok(self.deps.players.save(player).await?)
     }
 
     async fn audit_login(&self, player: &longshipx_domain::Player) {
