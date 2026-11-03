@@ -299,6 +299,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 真实 Redis 回归使用独立测试库:`LONGSHIPX_TEST_REDIS_URL=redis://127.0.0.1:6379/15 cargo test -p longshipx-infrastructure --test session_tokens -- --ignored`;默认测试不连接真实服务。
 
+TCP 绑定后每次入站业务请求及房间广播都会重新校验原会话 token;撤销、过期、存储错误或校验超过心跳超时均关闭连接,不再永久信任缓存身份。校验前已接收的请求/已入发送队列的数据不会撤回;无流量连接最迟在心跳超时清理。令牌仅私有保存,不输出到 Debug。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint

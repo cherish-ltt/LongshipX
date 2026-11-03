@@ -48,10 +48,13 @@ pub async fn handle_bind(
         .ok_or_else(|| ProtocolError::Handler("token 对应的玩家不存在".into()))?;
 
     let nickname = player.nickname().as_str().to_string();
-    ctx.set_authed(AuthedPlayer {
-        player_id,
-        nickname: nickname.clone(),
-    });
+    ctx.set_authed(
+        AuthedPlayer {
+            player_id,
+            nickname: nickname.clone(),
+        },
+        token.to_string(),
+    );
     // 鉴权完成,退出未鉴权名额计数。
     ctx.deps.auth_gate.release(ctx.peer_ip);
     metrics::counter!("longshipx_bind_total").increment(1);
