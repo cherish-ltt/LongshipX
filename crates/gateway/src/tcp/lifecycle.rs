@@ -1,6 +1,5 @@
 use super::context::{AuthState, ConnContext, GatewayDeps};
 use parking_lot::Mutex;
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::AbortHandle;
@@ -10,7 +9,6 @@ pub(super) struct ConnectionGuard {
     deps: Arc<GatewayDeps>,
     auth: Arc<Mutex<AuthState>>,
     conn_id: Uuid,
-    peer_ip: IpAddr,
     pub writer: AbortHandle,
     pub translator: AbortHandle,
     pub cleanup_timeout: Duration,
@@ -28,7 +26,6 @@ impl ConnectionGuard {
             deps: ctx.deps.clone(),
             auth: ctx.auth.clone(),
             conn_id: ctx.conn_id,
-            peer_ip: ctx.peer_ip,
             writer,
             translator,
             cleanup_timeout,
@@ -70,9 +67,6 @@ impl Drop for ConnectionGuard {
         self.writer.abort();
         self.translator.abort();
         let authenticated = self.auth.lock().player.is_some();
-        if !authenticated {
-            self.deps.auth_gate.release(self.peer_ip);
-        }
         if !self.cleaned && authenticated {
             // Aborting a handler must not skip the FIFO leave command after an in-flight join.
             let deps = self.deps.clone();

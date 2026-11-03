@@ -48,12 +48,13 @@ pub async fn handle_bind(
         .ok_or_else(|| ProtocolError::Handler("token 对应的玩家不存在".into()))?;
 
     let nickname = player.nickname().as_str().to_string();
-    ctx.set_authed(AuthedPlayer {
-        player_id,
-        nickname: nickname.clone(),
-    });
-    // 鉴权完成,退出未鉴权名额计数。
-    ctx.deps.auth_gate.release(ctx.peer_ip);
+    ctx.set_authed(
+        AuthedPlayer {
+            player_id,
+            nickname: nickname.clone(),
+        },
+        token.to_string(),
+    );
     metrics::counter!("longshipx_bind_total").increment(1);
     tracing::info!(conn = %ctx.conn_id, player = %player_id, "连接绑定成功");
     Ok(Some(bind_ok(&player_id.0.to_string(), &nickname)))

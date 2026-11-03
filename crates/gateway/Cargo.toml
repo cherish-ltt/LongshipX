@@ -16,6 +16,8 @@ longshipx-application = { workspace = true }
 longshipx-domain = { workspace = true }
 # 异步运行时
 tokio = { workspace = true, features = ["rt", "sync", "time", "net", "io-util", "macros"] }
+# 原始 TCP 接入适配
+async-trait = { workspace = true }
 # HTTP 入口(PRD 8.3:登录/注册等低频操作)
 axum = { workspace = true }
 # HTTP 入口 TLS 终结(复用 net-kit 的 rustls 配置,强制 HTTPS)
@@ -39,8 +41,6 @@ tracing = { workspace = true }
 tower = { workspace = true }
 http-body-util = { workspace = true }
 serde_json = { workspace = true }
-# 测试中实现端口 trait
-async-trait = { workspace = true }
 # 端到端 TLS 测试:自签证书与客户端连接
 rcgen = { workspace = true }
 rustls = { workspace = true }

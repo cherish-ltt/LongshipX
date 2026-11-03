@@ -10,7 +10,6 @@ use longshipx_protocol::Router;
 use parking_lot::Mutex;
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// 已鉴权玩家信息(绑定成功后写入)。
@@ -20,9 +19,10 @@ pub struct AuthedPlayer {
     pub nickname: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AuthState {
     pub player: Option<AuthedPlayer>,
+    session_token: Option<String>,
     /// 本连接当前所在房间(一条连接同时只在一个房间,PRD Room/Scene 语义)。
     pub current_room: Option<longshipx_domain::RoomId>,
 }
@@ -52,7 +52,7 @@ pub struct ConnContext {
     pub peer_ip: IpAddr,
     pub outbound: OutboundSender,
     /// 本连接的房间事件入口(加入房间时作为成员 sink 交给 Actor)。
-    pub room_tx: mpsc::Sender<longshipx_application::RoomEvent>,
+    pub room_tx: longshipx_application::RoomEventSink,
     pub auth: Arc<Mutex<AuthState>>,
     pub deps: Arc<GatewayDeps>,
 }
@@ -66,8 +66,29 @@ impl ConnContext {
         self.auth.lock().player.clone()
     }
 
-    pub fn set_authed(&self, player: AuthedPlayer) {
-        self.auth.lock().player = Some(player);
+    pub fn set_authed(&self, player: AuthedPlayer, token: String) {
+        let mut auth = self.auth.lock();
+        auth.player = Some(player);
+        auth.session_token = Some(token);
+    }
+
+    pub async fn validate_session(&self, timeout: std::time::Duration) -> bool {
+        let (player, token) = {
+            let auth = self.auth.lock();
+            (auth.player.clone(), auth.session_token.clone())
+        };
+        let (Some(player), Some(token)) = (player, token) else {
+            return false;
+        };
+        match tokio::time::timeout(timeout, self.deps.tokens.resolve(&token)).await {
+            Ok(Ok(Some(id))) if id == player.player_id => true,
+            Ok(Ok(_)) => false,
+            Ok(Err(err)) => {
+                tracing::warn!(conn = %self.conn_id, error = %err, "会话校验失败,关闭连接");
+                false
+            },
+            Err(_) => false,
+        }
     }
 
     pub fn current_room(&self) -> Option<longshipx_domain::RoomId> {

@@ -17,6 +17,32 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
+pub(crate) struct Admission {
+    pub deadline: tokio::time::Instant,
+    permit: Option<crate::tcp::auth_gate::AuthPermit>,
+    shutdown: watch::Receiver<bool>,
+}
+
+impl Admission {
+    pub fn acquire(
+        deps: &GatewayDeps,
+        peer: SocketAddr,
+        timeout: std::time::Duration,
+        shutdown: watch::Receiver<bool>,
+    ) -> Option<Self> {
+        let Some(permit) = deps.auth_gate.permit(peer.ip()) else {
+            metrics::counter!("longshipx_unauth_rejected_total").increment(1);
+            tracing::debug!(%peer, "未鉴权连接超过单 IP 上限,拒绝");
+            return None;
+        };
+        Some(Self {
+            deadline: tokio::time::Instant::now() + timeout,
+            permit: Some(permit),
+            shutdown,
+        })
+    }
+}
+
 /// 连接处理入口(每连接一个 task,panic 只影响本连接,PRD 9.3)。
 pub async fn handle_connection(
     stream: TlsTcpStream,
@@ -25,25 +51,20 @@ pub async fn handle_connection(
     config: TcpGatewayConfig,
 ) {
     let (_shutdown_tx, shutdown) = watch::channel(false);
-    handle_connection_until_shutdown(stream, peer, deps, config, shutdown).await;
+    let Some(admission) = Admission::acquire(&deps, peer, config.unauth_timeout, shutdown) else {
+        return;
+    };
+    handle_admitted_connection(stream, peer, deps, config, admission).await;
 }
 
-pub(crate) async fn handle_connection_until_shutdown(
+pub(crate) async fn handle_admitted_connection(
     stream: TlsTcpStream,
     peer: SocketAddr,
     deps: Arc<GatewayDeps>,
     config: TcpGatewayConfig,
-    mut shutdown: watch::Receiver<bool>,
+    mut admission: Admission,
 ) {
     let conn_id = uuid::Uuid::now_v7();
-
-    // 🔴 未鉴权连接按 IP 限量(PRD 8.3):超限直接关闭,连帧都不读。
-    let holding_unauth_slot = deps.auth_gate.acquire(peer.ip());
-    if !holding_unauth_slot {
-        metrics::counter!("longshipx_unauth_rejected_total").increment(1);
-        tracing::warn!(%peer, "未鉴权连接超过单 IP 上限,拒绝");
-        return;
-    }
 
     metrics::gauge!("longshipx_connections_active").increment(1.0);
     let (mut reader, outbound, mut writer) = split_connection(
@@ -58,20 +79,19 @@ pub(crate) async fn handle_connection_until_shutdown(
 
     // 房间事件翻译 task:RoomEvent → 协议帧 → 发送队列。
     let (room_tx, room_rx) = mpsc::channel::<RoomEvent>(config.room_event_capacity);
-    let translator = tokio::spawn(room_event_translator(
-        room_rx,
-        outbound.clone(),
-        deps.codec.clone(),
-    ));
-
     let ctx = ConnContext {
         conn_id,
         peer_ip: peer.ip(),
         outbound: outbound.clone(),
-        room_tx,
+        room_tx: room_tx.into(),
         auth: Arc::new(parking_lot::Mutex::new(Default::default())),
         deps: deps.clone(),
     };
+    let mut translator = tokio::spawn(room_event_translator(
+        room_rx,
+        ctx.clone(),
+        config.heartbeat_timeout,
+    ));
     let mut session = Session::new(chrono::Utc::now());
 
     let mut guard = ConnectionGuard::new(
@@ -80,13 +100,19 @@ pub(crate) async fn handle_connection_until_shutdown(
         translator.abort_handle(),
         config.shutdown_timeout,
     );
-    run_read_loop(&ctx, &mut reader, &mut session, &config, &mut shutdown).await;
+    let translator_finished = tokio::select! {
+        _ = run_read_loop(&ctx, &mut reader, &mut session, &config, &mut admission) => false,
+        _ = &mut translator => true,
+    };
 
     // ── 清理:离房 → 释放限流名额 → 摘除注册表 → 关闭发送队列 ──
     guard.cleanup().await;
     deps.connections.begin_drain(conn_id);
-    translator.abort();
-    let _ = translator.await;
+    if !translator_finished {
+        translator.abort();
+        let _ = translator.await;
+    }
+    drop(admission);
     // Drain only up to the configured deadline; a stalled peer cannot hold a connection slot.
     drop(ctx);
     drop(outbound);
@@ -107,20 +133,21 @@ async fn run_read_loop(
     reader: &mut FrameReader<TlsTcpStream>,
     session: &mut Session,
     config: &TcpGatewayConfig,
-    shutdown: &mut watch::Receiver<bool>,
+    admission: &mut Admission,
 ) {
     let mut bucket = TokenBucket::new(config.rate);
     loop {
         // 鉴权状态以 ctx 为准(BIND 处理器写入 ctx.auth)。
-        let timeout = if ctx.is_authenticated() {
-            config.heartbeat_timeout
+        let deadline = if ctx.is_authenticated() {
+            tokio::time::Instant::now() + config.heartbeat_timeout
         } else {
-            config.unauth_timeout
+            admission.deadline
         };
-        let deadline = tokio::time::Instant::now() + timeout;
         tokio::select! {
             biased;
-            _ = async { let _ = shutdown.wait_for(|stop| *stop).await; } => {
+            _ = ctx.outbound.disconnected() => return,
+            _ = ctx.room_tx.failed() => { ctx.outbound.disconnect(); return; },
+            _ = async { let _ = admission.shutdown.wait_for(|stop| *stop).await; } => {
                 let _ = ctx.try_send(OutboundMessage::Shutdown(longshipx_protocol::generated::ServerShutdownNotice {
                     message: "服务器即将维护,请保存进度并重连".into(),
                 }));
@@ -129,8 +156,20 @@ async fn run_read_loop(
             frame = reader.read_frame() => match frame {
                 Ok(Some(frame)) => {
                     session.touch_heartbeat(chrono::Utc::now());
-                    if !admit_frame(ctx, bucket.as_mut(), frame).await {
+                    if tokio::time::Instant::now() >= deadline {
+                        let _ = ctx.try_send(error_notification(ERR_TIMEOUT, "会话超时"));
                         return;
+                    }
+                    let authenticated = ctx.is_authenticated();
+                    let dispatch = admit_frame(ctx, bucket.as_mut(), frame, config.heartbeat_timeout);
+                    let outcome = if authenticated { Ok(dispatch.await) } else { tokio::time::timeout_at(deadline, dispatch).await };
+                    match outcome {
+                        Ok(true) => { if ctx.is_authenticated() { admission.permit.take(); } },
+                        Ok(false) => return,
+                        Err(_) => {
+                            let _ = ctx.try_send(error_notification(ERR_TIMEOUT, "会话超时"));
+                            return;
+                        },
                     }
                 }
                 Ok(None) => return, // 对端干净关闭
@@ -163,6 +202,7 @@ async fn admit_frame(
     ctx: &ConnContext,
     bucket: Option<&mut TokenBucket>,
     frame: longshipx_net_kit::Frame,
+    validation_timeout: std::time::Duration,
 ) -> bool {
     if let Some(bucket) = bucket
         && !bucket.try_acquire(std::time::Instant::now())
@@ -181,15 +221,23 @@ async fn admit_frame(
     };
 
     // 🔴 鉴权门:第一条消息必须是 BIND;绑定后拒绝重复 BIND。
-    if !ctx.is_authenticated() {
-        if message.opcode() != OP_C2S_BIND {
-            let _ = ctx.try_send(error_notification(
-                ERR_AUTH_REQUIRED_FIRST,
-                "必须先完成绑定",
-            ));
-            return false;
-        }
-    } else if message.opcode() == OP_C2S_BIND {
+    if !ctx.is_authenticated() && message.opcode() != OP_C2S_BIND {
+        let _ = ctx.try_send(error_notification(
+            ERR_AUTH_REQUIRED_FIRST,
+            "必须先完成绑定",
+        ));
+        return false;
+    }
+
+    if ctx.is_authenticated() && !ctx.validate_session(validation_timeout).await {
+        let _ = ctx.try_send(error_notification(
+            ERR_NOT_AUTHENTICATED,
+            "会话无效或已过期",
+        ));
+        return false;
+    }
+
+    if ctx.is_authenticated() && message.opcode() == OP_C2S_BIND {
         let _ = ctx.try_send(error_notification(ERR_ALREADY_BOUND, "连接已完成绑定"));
         return true;
     }
@@ -210,22 +258,24 @@ async fn admit_frame(
 /// 房间事件翻译:Actor 广播 → 协议帧;发送队列满即断开该连接。
 async fn room_event_translator(
     mut rx: mpsc::Receiver<RoomEvent>,
-    outbound: longshipx_net_kit::OutboundSender,
-    codec: Arc<
-        dyn longshipx_net_kit::codec::Codec<
-                In = longshipx_protocol::InboundMessage,
-                Out = OutboundMessage,
-                Error = longshipx_protocol::ProtocolError,
-            >,
-    >,
+    ctx: ConnContext,
+    validation_timeout: std::time::Duration,
 ) {
     while let Some(event) = rx.recv().await {
+        if !ctx.validate_session(validation_timeout).await {
+            let _ = ctx.try_send(error_notification(
+                ERR_NOT_AUTHENTICATED,
+                "会话无效或已过期",
+            ));
+            return;
+        }
         let message = OutboundMessage::RoomEvent(room_event_to_notification(event));
-        let Ok(frame) = codec.encode(&message) else {
+        let Ok(frame) = ctx.deps.codec.encode(&message) else {
             tracing::error!("房间事件编码失败");
-            continue;
+            ctx.outbound.disconnect();
+            return;
         };
-        if outbound.try_send_frame(frame).is_err() {
+        if ctx.outbound.try_send_frame(frame).is_err() {
             tracing::debug!("发送队列不可用,房间事件翻译退出");
             return;
         }

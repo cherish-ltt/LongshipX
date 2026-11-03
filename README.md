@@ -286,6 +286,24 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+
+accept worker 持续回收已经结束的连接 task,记录异常退出,历史连接数量不再累积 JoinSet 分配;连接并发上限不变。
+
+
+
+
+
+TCP 接入在 TLS 前占用全局连接名额与单 IP 未鉴权配额;`SERVER_UNAUTH_TIMEOUT_SECS` 是从 TCP 准入到 Bind 完成的一次性期限,包含 TLS 握手和存储查询,无效 Bind 不续期。`SERVER_ACCEPT_CONCURRENCY` 限制并行 TLS 握手,满时拒绝额外接入;错误/取消/超时自动归还未鉴权名额。
+
+
+
+
+
+TCP 绑定后每次入站业务请求及房间广播都会重新校验原会话 token;撤销、过期、存储错误或校验超过心跳超时均关闭连接,不再永久信任缓存身份。校验前已接收的请求/已入发送队列的数据不会撤回;无流量连接最迟在心跳超时清理。令牌仅私有保存,不输出到 Debug。
+
+
+
+
 `RoomService::leave/leave_all` 等待有界命令队列容量及 Actor 离房完成回执,返回成功时成员清理已执行;最后成员离开后立即移除房间注册项,不依赖后续请求触发惰性回收。`RoomCommand::Leave` 新增完成回执字段。
 
 
@@ -339,6 +357,13 @@ cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 
 `SERVER_WRITE_DRAIN_TIMEOUT_MS` 默认 1000，限制发送端全部关闭后 socket 写任务的排空时间；0 表示不等待排空。
 `TcpGatewayConfig` 新增 `shutdown_timeout`/`write_drain_timeout`，`ConnectionConfig` 新增 `write_drain_timeout`，`AcceptLoopConfig` 新增 `shutdown_timeout`。
 强制期限不保证尚未提交的业务完成；卡住的自定义房间事件发布器会在清理超时时记录错误，不能视为可靠投递。
+
+## 房间队列过载
+
+Actor 事件队列与 socket 出站队列都采用满即断开策略（包括聊天），不静默丢失关键回执后继续会话。
+`RoomEventSink` 持有独立且持久的失败信号；网关观察该信号并关闭写任务、清理连接。
+应用层调用者应保留 sink 并观察 `failed()`，原 `mpsc::Sender<RoomEvent>` 可通过 `into()` 适配。
+`OutboundSender` 一旦溢出即永久不可写，即使旧帧随后被消费也不会恢复。
 
 ## License
 

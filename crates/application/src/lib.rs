@@ -18,7 +18,7 @@ pub use dto::{
 pub use error::AppError;
 pub use player::{GainExpUseCase, GetPlayerProfile};
 pub use ports::{AuditLogger, EventPublisher, PasswordHasher, SessionTokenStore};
-pub use room::{RoomCommand, RoomEvent, RoomHandle, RoomService, RoomServiceConfig};
+pub use room::{RoomCommand, RoomEvent, RoomEventSink, RoomHandle, RoomService, RoomServiceConfig};
 pub use unit_of_work::UnitOfWork;
 
 #[cfg(test)]

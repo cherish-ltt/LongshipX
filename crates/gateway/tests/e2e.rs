@@ -31,6 +31,7 @@ struct TestServer {
     tokens: Arc<InMemoryTokenStore>,
     players: Arc<InMemoryPlayerRepository>,
     handle: tokio::task::JoinHandle<()>,
+    deps: Arc<GatewayDeps>,
 }
 
 fn test_config(addr: std::net::SocketAddr) -> TcpGatewayConfig {
@@ -57,10 +58,35 @@ async fn spawn_server() -> TestServer {
 }
 
 async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
+    let tokens = Arc::new(InMemoryTokenStore::new());
+    spawn_server_with_tokens(config, tokens.clone(), tokens).await
+}
+
+async fn spawn_server_with_tokens(
+    config: TcpGatewayConfig,
+    tokens: Arc<InMemoryTokenStore>,
+    validation: Arc<dyn longshipx_application::ports::SessionTokenStore>,
+) -> TestServer {
+    spawn_server_with_router_tokens(config, tokens, validation, build_router()).await
+}
+
+async fn spawn_server_with_router(
+    config: TcpGatewayConfig,
+    router: longshipx_protocol::Router<longshipx_gateway::tcp::ConnContext>,
+) -> TestServer {
+    let tokens = Arc::new(InMemoryTokenStore::new());
+    spawn_server_with_router_tokens(config, tokens.clone(), tokens, router).await
+}
+
+async fn spawn_server_with_router_tokens(
+    config: TcpGatewayConfig,
+    tokens: Arc<InMemoryTokenStore>,
+    validation: Arc<dyn longshipx_application::ports::SessionTokenStore>,
+    router: longshipx_protocol::Router<longshipx_gateway::tcp::ConnContext>,
+) -> TestServer {
     let certs = test_certs();
     let acceptor =
         longshipx_net_kit::tls::server_acceptor_from_pem_bytes(certs.0, certs.1).unwrap();
-    let tokens = Arc::new(InMemoryTokenStore::new());
     let players = Arc::new(InMemoryPlayerRepository::new());
     let publisher = Arc::new(InMemoryEventPublisher::new(64));
     let rooms = Arc::new(RoomService::new(
@@ -72,8 +98,8 @@ async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
     ));
     let deps = Arc::new(GatewayDeps {
         codec: Arc::new(GameCodec),
-        router: build_router(),
-        tokens: tokens.clone(),
+        router,
+        tokens: validation,
         players: players.clone(),
         profile: Arc::new(longshipx_application::GetPlayerProfile::new(
             players.clone(),
@@ -82,7 +108,7 @@ async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
         auth_gate: Arc::new(AuthGate::new(8)),
         connections: Arc::new(ConnectionRegistry::new()),
     });
-    let gateway = TcpGateway::bind(config, acceptor, deps).unwrap();
+    let gateway = TcpGateway::bind(config, acceptor, deps.clone()).unwrap();
     let addr = gateway.local_addr().unwrap();
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let handle = tokio::spawn(async move { gateway.run(shutdown_rx).await });
@@ -92,6 +118,7 @@ async fn spawn_server_with(config: TcpGatewayConfig) -> TestServer {
         tokens,
         players,
         handle,
+        deps,
     }
 }
 
@@ -400,4 +427,431 @@ async fn rate_limit_exceeded_disconnects() {
     .await;
     assert!(outcome.is_ok(), "应在限流后收到错误或被断开");
     server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn revoked_session_cannot_read_profile() {
+    let server = spawn_server().await;
+    let player = server.players.seed("revoked");
+    let token = server
+        .tokens
+        .create(player.id(), Duration::from_secs(60))
+        .await
+        .unwrap();
+    let mut client = TestClient::connect(server.addr).await;
+    client
+        .send(&InboundMessage::Bind(pb::BindRequest { token }))
+        .await;
+    assert!(
+        matches!(client.recv_expect("bind").await, OutboundMessage::BindResult(result) if result.ok)
+    );
+    server.tokens.revoke_player(player.id()).await.unwrap();
+    client
+        .send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
+        .await;
+    assert!(
+        matches!(client.recv_expect("rejected revoked session").await, OutboundMessage::Error(error) if error.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+    );
+    server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn expired_session_cannot_execute_room_commands() {
+    let server = spawn_server().await;
+    let player = server.players.seed("expired");
+    let token = server
+        .tokens
+        .create(player.id(), Duration::from_millis(150))
+        .await
+        .unwrap();
+    let mut client = TestClient::connect(server.addr).await;
+    client
+        .send(&InboundMessage::Bind(pb::BindRequest { token }))
+        .await;
+    assert!(
+        matches!(client.recv_expect("bind").await, OutboundMessage::BindResult(result) if result.ok)
+    );
+    tokio::time::sleep(Duration::from_millis(180)).await;
+    client
+        .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+            room_id: None,
+        }))
+        .await;
+    assert!(
+        matches!(client.recv_expect("rejected expired session").await, OutboundMessage::Error(error) if error.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+    );
+    server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn revoked_session_cannot_receive_new_room_broadcasts() {
+    let server = spawn_server().await;
+    let player = server.players.seed("revoked-broadcast");
+    let token = server
+        .tokens
+        .create(player.id(), Duration::from_secs(60))
+        .await
+        .unwrap();
+    let mut client = TestClient::connect(server.addr).await;
+    client
+        .send(&InboundMessage::Bind(pb::BindRequest { token }))
+        .await;
+    let _ = client.recv_expect("bind").await;
+    client
+        .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+            room_id: None,
+        }))
+        .await;
+    let OutboundMessage::RoomEvent(joined) = client.recv_expect("join").await else {
+        panic!("join event");
+    };
+    let Some(pb::room_event_notification::Event::MemberJoined(joined)) = joined.event else {
+        panic!("joined");
+    };
+    let room_id = longshipx_domain::RoomId(uuid::Uuid::parse_str(&joined.room_id).unwrap());
+    server.tokens.revoke_player(player.id()).await.unwrap();
+    server
+        .deps
+        .rooms
+        .chat(room_id, player.id(), "must not be delivered".into())
+        .await
+        .unwrap();
+    let reply = tokio::time::timeout(
+        Duration::from_secs(1),
+        read_frame(&mut client.reader, 65_536),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !matches!(reply, Ok(Some(frame)) if matches!(ClientCodec.decode(&frame), Ok(OutboundMessage::RoomEvent(_)))),
+        "revoked connection still receives room data"
+    );
+    server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn session_revocation_is_player_scoped_and_releases_connections() {
+    let server = spawn_server().await;
+    let (bind, _) = make_player_with_token(&server, "revoked-shared").await;
+    let id = server.tokens.resolve(&bind.token).await.unwrap().unwrap();
+    let (other, _) = make_player_with_token(&server, "unrelated").await;
+    let mut alice = TestClient::connect(server.addr).await;
+    let mut second = TestClient::connect(server.addr).await;
+    let mut bob = TestClient::connect(server.addr).await;
+    for (client, request) in [
+        (&mut alice, bind.clone()),
+        (&mut second, bind),
+        (&mut bob, other),
+    ] {
+        client.send(&InboundMessage::Bind(request)).await;
+        client.recv_expect("bind").await;
+    }
+    server.tokens.revoke_player(id).await.unwrap();
+    for client in [&mut alice, &mut second] {
+        client
+            .send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
+            .await;
+        assert!(
+            matches!(client.recv_expect("rejected").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+        );
+    }
+    bob.send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
+        .await;
+    assert!(matches!(bob.recv_expect("profile").await, OutboundMessage::Profile(p) if p.ok));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.deps.connections.active_count() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn session_store_errors_and_stalls_fail_closed() {
+    use longshipx_application::{AppError, ports::SessionTokenStore};
+    use longshipx_domain::PlayerId;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct FaultStore {
+        inner: Arc<InMemoryTokenStore>,
+        fail: AtomicBool,
+        stall: bool,
+    }
+    #[async_trait::async_trait]
+    impl SessionTokenStore for FaultStore {
+        async fn create(&self, id: PlayerId, ttl: Duration) -> Result<String, AppError> {
+            self.inner.create(id, ttl).await
+        }
+        async fn revoke_player(&self, id: PlayerId) -> Result<(), AppError> {
+            self.inner.revoke_player(id).await
+        }
+        async fn resolve(&self, token: &str) -> Result<Option<PlayerId>, AppError> {
+            if self.fail.load(Ordering::SeqCst) {
+                if self.stall {
+                    std::future::pending::<()>().await;
+                }
+                return Err(AppError::Storage("unavailable".into()));
+            }
+            self.inner.resolve(token).await
+        }
+    }
+    for stall in [false, true] {
+        let tokens = Arc::new(InMemoryTokenStore::new());
+        let store = Arc::new(FaultStore {
+            inner: tokens.clone(),
+            fail: AtomicBool::new(false),
+            stall,
+        });
+        let mut config = test_config("127.0.0.1:0".parse().unwrap());
+        config.heartbeat_timeout = Duration::from_millis(100);
+        let server = spawn_server_with_tokens(config, tokens, store.clone()).await;
+        let (bind, _) = make_player_with_token(&server, "store-failure").await;
+        let mut client = TestClient::connect(server.addr).await;
+        client.send(&InboundMessage::Bind(bind)).await;
+        client.recv_expect("bind").await;
+        store.fail.store(true, Ordering::SeqCst);
+        client
+            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                room_id: None,
+            }))
+            .await;
+        assert!(
+            matches!(client.recv_expect("rejected").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+        );
+        assert_eq!(server.deps.rooms.active_rooms().await, 0);
+        server.shutdown_tx.send_replace(true);
+    }
+}
+
+#[tokio::test]
+async fn invalid_bind_cannot_extend_authentication_deadline() {
+    let mut config = test_config("127.0.0.1:0".parse().unwrap());
+    config.unauth_timeout = Duration::from_millis(200);
+    let server = spawn_server_with(config).await;
+    let mut client = TestClient::connect(server.addr).await;
+    let mut expired = false;
+    for _ in 0..6 {
+        client
+            .send(&InboundMessage::Bind(pb::BindRequest {
+                token: "invalid".into(),
+            }))
+            .await;
+        if matches!(client.recv_expect("bind or timeout").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_TIMEOUT)
+        {
+            expired = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(75)).await;
+    }
+    server.shutdown_tx.send_replace(true);
+    assert!(
+        expired,
+        "invalid Bind keeps the unauthenticated connection alive beyond its lifetime"
+    );
+}
+
+#[tokio::test]
+async fn stalled_handshakes_release_admission_workers() {
+    let mut config = test_config("127.0.0.1:0".parse().unwrap());
+    config.accept_concurrency = 2;
+    config.unauth_timeout = Duration::from_millis(150);
+    let server = spawn_server_with(config).await;
+    let first = TcpStream::connect(server.addr).await.unwrap();
+    let second = TcpStream::connect(server.addr).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let healthy =
+        tokio::time::timeout(Duration::from_millis(500), TestClient::connect(server.addr)).await;
+    drop((first, second));
+    server.shutdown_tx.send_replace(true);
+    assert!(
+        healthy.is_ok(),
+        "silent TLS peers monopolize admission workers"
+    );
+}
+
+#[tokio::test]
+async fn tls_admission_counts_raw_sockets_and_recovers_after_timeout() {
+    let mut config = test_config("127.0.0.1:0".parse().unwrap());
+    config.max_connections = 2;
+    config.unauth_timeout = Duration::from_millis(150);
+    let server = spawn_server_with(config).await;
+    let first = TcpStream::connect(server.addr).await.unwrap();
+    let second = TcpStream::connect(server.addr).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.deps.auth_gate.unauth_count(server.addr.ip()) != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut excess = TcpStream::connect(server.addr).await.unwrap();
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(1), excess.read_u8()).await,
+        Ok(Err(_))
+    ));
+    tokio::time::sleep(Duration::from_millis(180)).await;
+    assert_eq!(server.deps.auth_gate.unauth_count(server.addr.ip()), 0);
+    let client = TestClient::connect(server.addr).await;
+    drop((first, second, client));
+    server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn slow_bind_lookup_cannot_outlive_authentication_deadline() {
+    use longshipx_application::{AppError, ports::SessionTokenStore};
+    struct Stalled;
+    #[async_trait::async_trait]
+    impl SessionTokenStore for Stalled {
+        async fn create(
+            &self,
+            _: longshipx_domain::PlayerId,
+            _: Duration,
+        ) -> Result<String, AppError> {
+            unreachable!()
+        }
+        async fn revoke_player(&self, _: longshipx_domain::PlayerId) -> Result<(), AppError> {
+            unreachable!()
+        }
+        async fn resolve(&self, _: &str) -> Result<Option<longshipx_domain::PlayerId>, AppError> {
+            std::future::pending().await
+        }
+    }
+    let mut config = test_config("127.0.0.1:0".parse().unwrap());
+    config.unauth_timeout = Duration::from_millis(150);
+    let server = spawn_server_with_tokens(
+        config,
+        Arc::new(InMemoryTokenStore::new()),
+        Arc::new(Stalled),
+    )
+    .await;
+    let mut client = TestClient::connect(server.addr).await;
+    client
+        .send(&InboundMessage::Bind(pb::BindRequest {
+            token: "slow".into(),
+        }))
+        .await;
+    assert!(
+        matches!(client.recv_expect("auth timeout").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_TIMEOUT)
+    );
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.deps.auth_gate.unauth_count(server.addr.ip()) != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server.shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn both_queue_overloads_disconnect_only_the_affected_room_member() {
+    use longshipx_gateway::tcp::handlers::handle_heartbeat;
+    use longshipx_protocol::opcodes::OP_C2S_HEARTBEAT;
+    for room_queue in [true, false] {
+        let mut router = build_router();
+        router.route(
+            OP_C2S_HEARTBEAT,
+            move |ctx: longshipx_gateway::tcp::ConnContext, message| async move {
+                if ctx.authed_player().unwrap().nickname == "overload" {
+                    // No yield: fill the real queue before its consumer can run on this runtime.
+                    for _ in 0..65 {
+                        if room_queue {
+                            ctx.room_tx
+                                .try_send(longshipx_application::RoomEvent::Closed {
+                                    room_id: ctx.current_room().unwrap(),
+                                    reason: "test overload".into(),
+                                });
+                        } else {
+                            let _ = ctx
+                                .outbound
+                                .try_send_frame(longshipx_net_kit::Frame::new(1, vec![]));
+                        }
+                    }
+                    Ok(None)
+                } else {
+                    handle_heartbeat(ctx, message).await
+                }
+            },
+        );
+        let server =
+            spawn_server_with_router(test_config("127.0.0.1:0".parse().unwrap()), router).await;
+        let mut victim = TestClient::connect(server.addr).await;
+        let (bind, _) = make_player_with_token(&server, "overload").await;
+        victim.send(&InboundMessage::Bind(bind)).await;
+        victim.recv_expect("bind").await;
+        victim
+            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                room_id: None,
+            }))
+            .await;
+        let OutboundMessage::RoomEvent(joined) = victim.recv_expect("join").await else {
+            panic!("missing join");
+        };
+        let Some(pb::room_event_notification::Event::MemberJoined(joined)) = joined.event else {
+            panic!("missing member join");
+        };
+        let mut healthy = TestClient::connect(server.addr).await;
+        let (bind, _) = make_player_with_token(&server, "healthy").await;
+        healthy.send(&InboundMessage::Bind(bind)).await;
+        healthy.recv_expect("bind").await;
+        healthy
+            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                room_id: Some(joined.room_id),
+            }))
+            .await;
+        healthy.recv_expect("join").await;
+        victim.recv_expect("peer join").await;
+        victim
+            .send(&InboundMessage::Heartbeat(pb::HeartbeatPing {
+                client_ts_ms: 0,
+            }))
+            .await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while server.deps.connections.active_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let left = healthy.recv_expect("departed overload member").await;
+        assert!(matches!(
+            left,
+            OutboundMessage::RoomEvent(pb::RoomEventNotification {
+                event: Some(pb::room_event_notification::Event::MemberLeft(_)),
+                ..
+            })
+        ));
+        assert_eq!(server.deps.auth_gate.unauth_count(server.addr.ip()), 0);
+        let end = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_frame(&mut victim.reader, 65_536),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(end, Ok(None) | Err(_)),
+            "overloaded TLS connection remained readable"
+        );
+        healthy
+            .send(&InboundMessage::Heartbeat(pb::HeartbeatPing {
+                client_ts_ms: 0,
+            }))
+            .await;
+        assert!(matches!(
+            healthy.recv_expect("healthy heartbeat").await,
+            OutboundMessage::HeartbeatAck(_)
+        ));
+        drop(victim);
+        drop(healthy);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while server.deps.connections.active_count() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        server.shutdown_tx.send_replace(true);
+        server.handle.await.unwrap();
+    }
 }

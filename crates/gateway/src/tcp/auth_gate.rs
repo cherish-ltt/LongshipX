@@ -3,6 +3,18 @@
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::Arc;
+
+pub(crate) struct AuthPermit {
+    gate: Arc<AuthGate>,
+    ip: IpAddr,
+}
+
+impl Drop for AuthPermit {
+    fn drop(&mut self) {
+        self.gate.release(self.ip);
+    }
+}
 
 pub struct AuthGate {
     max_per_ip: usize,
@@ -10,6 +22,12 @@ pub struct AuthGate {
 }
 
 impl AuthGate {
+    pub(crate) fn permit(self: &Arc<Self>, ip: IpAddr) -> Option<AuthPermit> {
+        self.acquire(ip).then(|| AuthPermit {
+            gate: self.clone(),
+            ip,
+        })
+    }
     pub fn new(max_per_ip: usize) -> Self {
         Self {
             max_per_ip,
@@ -79,5 +97,19 @@ mod tests {
         gate.release(a);
         assert_eq!(gate.unauth_count(a), 0);
         assert!(gate.acquire(a));
+    }
+
+    #[test]
+    fn permit_drop_releases_only_its_ip() {
+        let gate = Arc::new(AuthGate::new(1));
+        let a = ip([10, 0, 0, 1]);
+        let b = ip([10, 0, 0, 2]);
+        let first = gate.permit(a).unwrap();
+        assert!(gate.permit(a).is_none());
+        let other = gate.permit(b).unwrap();
+        drop(first);
+        assert_eq!(gate.unauth_count(a), 0);
+        assert_eq!(gate.unauth_count(b), 1);
+        drop(other);
     }
 }

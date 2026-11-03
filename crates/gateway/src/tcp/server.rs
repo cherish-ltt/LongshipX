@@ -3,9 +3,26 @@
 use crate::tcp::config::TcpGatewayConfig;
 use crate::tcp::context::GatewayDeps;
 use crate::tcp::handler;
+use longshipx_net_kit::Transport;
 use longshipx_net_kit::{AcceptLoopConfig, TcpTlsTransport, TlsAcceptor, accept_loop_with};
 use std::sync::Arc;
 use tokio::sync::watch;
+
+struct RawTcp(Arc<TcpTlsTransport>);
+
+#[async_trait::async_trait]
+impl Transport for RawTcp {
+    type Conn = tokio::net::TcpStream;
+    async fn accept(&self) -> std::io::Result<(Self::Conn, std::net::SocketAddr)> {
+        self.0
+            .accept_tcp()
+            .await
+            .map_err(|err| std::io::Error::other(err.to_string()))
+    }
+    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.0.local_addr()
+    }
+}
 
 pub struct TcpGateway {
     transport: Arc<TcpTlsTransport>,
@@ -44,16 +61,49 @@ impl TcpGateway {
         let deps = self.deps.clone();
         let config = self.config;
         let connections_shutdown = shutdown.clone();
-        let handler = move |stream: longshipx_net_kit::TlsTcpStream, peer: std::net::SocketAddr| {
+        let transport = self.transport.clone();
+        let handshakes = Arc::new(tokio::sync::Semaphore::new(
+            config.accept_concurrency.max(1) as usize,
+        ));
+        let handler = move |stream: tokio::net::TcpStream, peer: std::net::SocketAddr| {
             let deps = deps.clone();
-            let shutdown = connections_shutdown.clone();
+            let mut shutdown = connections_shutdown.clone();
+            let transport = transport.clone();
+            let handshakes = handshakes.clone();
             async move {
-                handler::handle_connection_until_shutdown(stream, peer, deps, config, shutdown)
-                    .await;
+                let Some(admission) = handler::Admission::acquire(
+                    &deps,
+                    peer,
+                    config.unauth_timeout,
+                    shutdown.clone(),
+                ) else {
+                    return;
+                };
+                let Ok(slot) = handshakes.try_acquire_owned() else {
+                    tracing::debug!(%peer, "TLS 握手并发已达上限,拒绝");
+                    return;
+                };
+                let result = tokio::select! {
+                    _ = async { let _ = shutdown.wait_for(|stop| *stop).await; } => return,
+                    result = tokio::time::timeout_at(admission.deadline, transport.handshake(stream)) => result,
+                };
+                drop(slot);
+                let stream = match result {
+                    Ok(Ok(stream)) => stream,
+                    Ok(Err(err)) => {
+                        tracing::debug!(%peer, error = %err, "TLS 握手失败");
+                        return;
+                    },
+                    Err(_) => {
+                        tracing::debug!(%peer, "TLS 握手超时");
+                        return;
+                    },
+                };
+                handler::handle_admitted_connection(stream, peer, deps, config, admission).await;
             }
         };
         accept_loop_with(
-            self.transport.clone(),
+            Arc::new(RawTcp(self.transport.clone())),
             AcceptLoopConfig {
                 shutdown_timeout: self.config.shutdown_timeout,
                 max_concurrent: Some(self.config.max_connections),

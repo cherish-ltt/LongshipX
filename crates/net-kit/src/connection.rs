@@ -43,17 +43,19 @@ where
 {
     let (read_half, write_half) = tokio::io::split(io);
     let (tx, rx) = mpsc::channel(config.send_queue_capacity);
-    let (lifetime_tx, mut lifetime_rx) = tokio::sync::watch::channel(());
+    let outbound = OutboundSender::new(tx);
+    let mut disconnected = outbound.disconnect_signal();
     let writer = tokio::spawn(async move {
         let work = write_task(write_half, rx, config.max_frame_size);
         tokio::pin!(work);
         tokio::select! {
-            _ = &mut work => {},
-            _ = lifetime_rx.changed() => {
-                if tokio::time::timeout(config.write_drain_timeout, work).await.is_err() {
+            biased;
+            senders_dropped = async { disconnected.wait_for(|closed| *closed).await.is_err() } => {
+                if senders_dropped && tokio::time::timeout(config.write_drain_timeout, work).await.is_err() {
                     tracing::debug!("writer drain deadline exceeded");
                 }
             },
+            _ = &mut work => {},
         }
     });
     (
@@ -61,7 +63,7 @@ where
             stream: read_half,
             max_frame_size: config.max_frame_size,
         },
-        OutboundSender::with_lifetime(tx, lifetime_tx),
+        outbound,
         writer,
     )
 }
@@ -154,6 +156,20 @@ mod tests {
         .unwrap();
         assert_eq!(frame.payload, vec![7; 128]);
         writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_disconnect_cancels_blocked_socket_write() {
+        let (client, _server) = tokio::io::duplex(1);
+        let (_reader, sender, writer) = split_connection(client, CONFIG);
+        sender.try_send_frame(Frame::new(1, vec![0; 128])).unwrap();
+        tokio::task::yield_now().await;
+        sender.disconnect();
+        tokio::time::timeout(Duration::from_secs(1), writer)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(sender.is_closed());
     }
 
     #[tokio::test]
