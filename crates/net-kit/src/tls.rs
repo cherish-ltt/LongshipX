@@ -3,6 +3,7 @@
 use crate::error::NetError;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,16 +18,28 @@ pub fn server_config_from_files(
     cert_path: &Path,
     key_path: &Path,
 ) -> Result<Arc<rustls::ServerConfig>, NetError> {
-    let cert_pem = std::fs::read(cert_path).map_err(|err| {
+    let cert_path = expand_home(cert_path)?;
+    let key_path = expand_home(key_path)?;
+    let cert_pem = std::fs::read(&cert_path).map_err(|err| {
         NetError::TlsConfig(format!("读取证书 {:?} 失败: {err}", cert_path.display()))
     })?;
-    let key_pem = std::fs::read(key_path).map_err(|err| {
+    let key_pem = std::fs::read(&key_path).map_err(|err| {
         NetError::TlsConfig(format!("读取私钥 {:?} 失败: {err}", key_path.display()))
     })?;
     server_config_from_pem_bytes(
         &String::from_utf8_lossy(&cert_pem),
         &String::from_utf8_lossy(&key_pem),
     )
+}
+
+fn expand_home(path: &Path) -> Result<Cow<'_, Path>, NetError> {
+    let Ok(relative) = path.strip_prefix("~") else {
+        return Ok(Cow::Borrowed(path));
+    };
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NetError::TlsConfig("展开 ~/ 路径需要非空 HOME".into()))?;
+    Ok(Cow::Owned(Path::new(&home).join(relative)))
 }
 
 /// 从 PEM 字节串构建 TLS 1.3-only 的服务端配置(便于测试)。
