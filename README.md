@@ -286,6 +286,8 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+注册审计的 `detail.username` 保存与账号一致的归一化用户名,`player_id` 单独关联玩家;审计不记录密码或令牌。
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint

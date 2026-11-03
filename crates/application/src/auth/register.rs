@@ -49,7 +49,7 @@ impl RegisterUseCase {
 
         self.accounts.save(&account).await?;
         self.players.save(&player).await?;
-        self.audit_success(&player).await;
+        self.audit_success(&player, account.username()).await;
 
         Ok(RegisterResult {
             account_id: account.id(),
@@ -59,8 +59,8 @@ impl RegisterUseCase {
     }
 
     /// 审计失败不阻断注册主流程,仅记录告警(PRD 7.3:审计服务于排查)。
-    async fn audit_success(&self, player: &Player) {
-        let detail = format!("{{\"username\":\"{}\"}}", player.id());
+    async fn audit_success(&self, player: &Player, username: &Username) {
+        let detail = format!("{{\"username\":\"{}\"}}", username.as_str());
         if let Err(err) = self
             .audit
             .record(Some(player.id()), "register", detail)
@@ -114,6 +114,42 @@ mod tests {
         assert_eq!(result.nickname, "爱丽丝");
         assert_eq!(accounts.len(), 1);
         assert_eq!(audit.count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn audit_records_normalized_username_and_player() {
+        let (use_case, _, audit) = use_case();
+        let mut command = cmd();
+        command.username = "  ALICE_01  ".into();
+        let result = use_case.execute(command).await.unwrap();
+        let records = audit.records.lock().unwrap();
+        assert_eq!(records[0].0, Some(result.player_id));
+        assert_eq!(records[0].1, "register:{\"username\":\"alice_01\"}");
+    }
+
+    struct FailingAudit;
+
+    #[async_trait::async_trait]
+    impl crate::ports::AuditLogger for FailingAudit {
+        async fn record(
+            &self,
+            _: Option<longshipx_domain::PlayerId>,
+            _: &str,
+            _: String,
+        ) -> Result<(), AppError> {
+            Err(AppError::Storage("audit unavailable".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_failure_does_not_fail_registration() {
+        let use_case = RegisterUseCase::new(
+            Arc::new(FakeAccounts::default()),
+            Arc::new(FakePlayers::default()),
+            Arc::new(FakeHasher),
+            Arc::new(FailingAudit),
+        );
+        assert!(use_case.execute(cmd()).await.is_ok());
     }
 
     #[tokio::test]
