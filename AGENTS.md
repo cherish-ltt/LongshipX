@@ -296,3 +296,9 @@ msrv = "1.95.0"
 - 变更记录位于 `docs/versions/`,**每个发布版本一个独立 Markdown 文件**,命名为 `vX.Y.Z.md`(如 `v0.1.0.md`、`v0.2.0.md`);不再维护单一 CHANGELOG 文件。
 - 版本文件按 Keep a Changelog 风格以 `Changed` / `Added` / `Fixed` / `Removed` 等小节记录用户可感知的变更;**发布新版本时新建对应文件**,与版本号改动在同一发布批次提交。
 - 发布流程:新增 `docs/versions/vX.Y.Z.md` + 版本号同步(`chore: 版本更新至 X.Y.Z`)→ 打注解 tag `vX.Y.Z` → push 分支与 tag。
+
+
+### 10.11 接入与鉴权期限
+
+- TLS 前占用全局连接及单 IP 未鉴权配额,同一绝对期限覆盖握手和 Bind 全流程;无效数据不能续期。
+- 未鉴权配额由 RAII 管理,握手失败/超时/任务取消必须归还;原始 TCP 只用于准入适配,完成 TLS 前禁止分发应用协议。

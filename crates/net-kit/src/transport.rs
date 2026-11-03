@@ -51,14 +51,23 @@ impl TcpTlsTransport {
 
     /// 接受一条 TCP 连接并完成 TLS 1.3 握手。
     pub async fn accept_tls(&self) -> Result<(TlsTcpStream, SocketAddr), NetError> {
+        let (tcp, peer) = self.accept_tcp().await?;
+        Ok((self.handshake(tcp).await?, peer))
+    }
+
+    /// 仅接收原始 TCP;调用方必须先限额并在有期限的 handshake 成功后才分发业务。
+    pub async fn accept_tcp(&self) -> Result<(tokio::net::TcpStream, SocketAddr), NetError> {
         let (tcp, peer) = self.listener.accept().await?;
         self.configure(&tcp)?;
-        let stream = self
-            .acceptor
+        Ok((tcp, peer))
+    }
+
+    /// 将已准入的原始 TCP 升级为 TLS,不得在成功前读写应用协议。
+    pub async fn handshake(&self, tcp: tokio::net::TcpStream) -> Result<TlsTcpStream, NetError> {
+        self.acceptor
             .accept(tcp)
             .await
-            .map_err(|err| NetError::Tls(err.to_string()))?;
-        Ok((stream, peer))
+            .map_err(|err| NetError::Tls(err.to_string()))
     }
 
     fn configure(&self, tcp: &tokio::net::TcpStream) -> Result<(), NetError> {

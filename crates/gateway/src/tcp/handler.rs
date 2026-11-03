@@ -16,6 +16,29 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+pub(crate) struct Admission {
+    pub deadline: tokio::time::Instant,
+    permit: Option<crate::tcp::auth_gate::AuthPermit>,
+}
+
+impl Admission {
+    pub fn acquire(
+        deps: &GatewayDeps,
+        peer: SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Option<Self> {
+        let Some(permit) = deps.auth_gate.permit(peer.ip()) else {
+            metrics::counter!("longshipx_unauth_rejected_total").increment(1);
+            tracing::debug!(%peer, "未鉴权连接超过单 IP 上限,拒绝");
+            return None;
+        };
+        Some(Self {
+            deadline: tokio::time::Instant::now() + timeout,
+            permit: Some(permit),
+        })
+    }
+}
+
 /// 连接处理入口(每连接一个 task,panic 只影响本连接,PRD 9.3)。
 pub async fn handle_connection(
     stream: TlsTcpStream,
@@ -23,16 +46,21 @@ pub async fn handle_connection(
     deps: Arc<GatewayDeps>,
     config: TcpGatewayConfig,
 ) {
+    let Some(admission) = Admission::acquire(&deps, peer, config.unauth_timeout) else {
+        return;
+    };
+    handle_admitted_connection(stream, peer, deps, config, admission).await;
+}
+
+pub(crate) async fn handle_admitted_connection(
+    stream: TlsTcpStream,
+    peer: SocketAddr,
+    deps: Arc<GatewayDeps>,
+    config: TcpGatewayConfig,
+    mut admission: Admission,
+) {
     let conn_id = uuid::Uuid::now_v7();
     metrics::gauge!("longshipx_connections_active").increment(1.0);
-
-    // 🔴 未鉴权连接按 IP 限量(PRD 8.3):超限直接关闭,连帧都不读。
-    let holding_unauth_slot = deps.auth_gate.acquire(peer.ip());
-    if !holding_unauth_slot {
-        metrics::counter!("longshipx_unauth_rejected_total").increment(1);
-        tracing::warn!(%peer, "未鉴权连接超过单 IP 上限,拒绝");
-        return;
-    }
 
     let (mut reader, outbound, writer) = split_connection(
         stream,
@@ -61,7 +89,7 @@ pub async fn handle_connection(
     };
     let mut session = Session::new(chrono::Utc::now());
 
-    run_read_loop(&ctx, &mut reader, &mut session, &config).await;
+    run_read_loop(&ctx, &mut reader, &mut session, &config, &mut admission).await;
 
     // ── 清理:离房 → 释放限流名额 → 摘除注册表 → 关闭发送队列 ──
     if let Some(player) = ctx.authed_player() {
@@ -70,9 +98,7 @@ pub async fn handle_connection(
             .leave_all(player.player_id, "connection closed")
             .await;
     }
-    if holding_unauth_slot && !ctx.is_authenticated() {
-        deps.auth_gate.release(peer.ip());
-    }
+    drop(admission);
     deps.connections.remove(conn_id);
     translator.abort();
     // ctx 与 outbound 各持有一份发送端克隆;写 task 只有在全部发送端关闭后
@@ -91,22 +117,34 @@ async fn run_read_loop(
     reader: &mut FrameReader<TlsTcpStream>,
     session: &mut Session,
     config: &TcpGatewayConfig,
+    admission: &mut Admission,
 ) {
     let mut bucket = TokenBucket::new(config.rate);
     loop {
         // 鉴权状态以 ctx 为准(BIND 处理器写入 ctx.auth)。
-        let timeout = if ctx.is_authenticated() {
-            config.heartbeat_timeout
+        let deadline = if ctx.is_authenticated() {
+            tokio::time::Instant::now() + config.heartbeat_timeout
         } else {
-            config.unauth_timeout
+            admission.deadline
         };
-        let deadline = tokio::time::Instant::now() + timeout;
         tokio::select! {
             frame = reader.read_frame() => match frame {
                 Ok(Some(frame)) => {
                     session.touch_heartbeat(chrono::Utc::now());
-                    if !admit_frame(ctx, bucket.as_mut(), frame).await {
+                    if tokio::time::Instant::now() >= deadline {
+                        let _ = ctx.try_send(error_notification(ERR_TIMEOUT, "会话超时"));
                         return;
+                    }
+                    let authenticated = ctx.is_authenticated();
+                    let dispatch = admit_frame(ctx, bucket.as_mut(), frame);
+                    let outcome = if authenticated { Ok(dispatch.await) } else { tokio::time::timeout_at(deadline, dispatch).await };
+                    match outcome {
+                        Ok(true) => { if ctx.is_authenticated() { admission.permit.take(); } },
+                        Ok(false) => return,
+                        Err(_) => {
+                            let _ = ctx.try_send(error_notification(ERR_TIMEOUT, "会话超时"));
+                            return;
+                        },
                     }
                 }
                 Ok(None) => return, // 对端干净关闭

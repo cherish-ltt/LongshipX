@@ -52,8 +52,6 @@ pub async fn handle_bind(
         player_id,
         nickname: nickname.clone(),
     });
-    // 鉴权完成,退出未鉴权名额计数。
-    ctx.deps.auth_gate.release(ctx.peer_ip);
     metrics::counter!("longshipx_bind_total").increment(1);
     tracing::info!(conn = %ctx.conn_id, player = %player_id, "连接绑定成功");
     Ok(Some(bind_ok(&player_id.0.to_string(), &nickname)))

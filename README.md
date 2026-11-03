@@ -286,6 +286,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+TCP 接入在 TLS 前占用全局连接名额与单 IP 未鉴权配额;`SERVER_UNAUTH_TIMEOUT_SECS` 是从 TCP 准入到 Bind 完成的一次性期限,包含 TLS 握手和存储查询,无效 Bind 不续期。`SERVER_ACCEPT_CONCURRENCY` 限制并行 TLS 握手,满时拒绝额外接入;错误/取消/超时自动归还未鉴权名额。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint
