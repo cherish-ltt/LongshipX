@@ -246,6 +246,7 @@ msrv = "1.95.0"
 
 - 全部可调参数经环境变量注入,默认值集中在 `crates/infrastructure/src/config.rs`(与 PRD 第 18 章一一对应);模板见 `.public_env`,真实 `.env` 已被 `.gitignore` 排除。
 - 配置解析通过 `Config::from_lookup` 注入读取器(edition 2024 下避免 `unsafe set_var`),新增配置项必须同步:config 结构体 + 默认值 + `.public_env` + 单测。
+- 连接发送队列与房间命令队列容量均必须在 `Config::validate` 拒绝 0,不得让非法容量进入 Tokio 有界通道构造。
 
 ### 10.4 测试与覆盖率
 

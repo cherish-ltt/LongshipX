@@ -168,6 +168,12 @@ impl Config {
                 reason: "发送队列必须有界且大于 0(PRD 8.5)".into(),
             });
         }
+        if self.network.channel_per_room == 0 {
+            return Err(ConfigError::Invalid {
+                name: "SERVER_CHANNEL_PER_ROOM_SIZE",
+                reason: "房间命令队列容量必须大于 0".into(),
+            });
+        }
         Ok(())
     }
 }
@@ -510,6 +516,48 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn room_queue_capacity_is_validated_before_serving() {
+        let config = config_with(&[("SERVER_CHANNEL_PER_ROOM_SIZE", "0")]).unwrap();
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::Invalid {
+                name: "SERVER_CHANNEL_PER_ROOM_SIZE",
+                ..
+            })
+        ));
+        for capacity in ["1", "512"] {
+            let config = config_with(&[("SERVER_CHANNEL_PER_ROOM_SIZE", capacity)]).unwrap();
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn positive_room_queue_capacity_can_create_rooms() {
+        use crate::events::InMemoryEventPublisher;
+        use longshipx_application::{RoomService, RoomServiceConfig};
+        use longshipx_domain::PlayerId;
+        use std::sync::Arc;
+
+        for capacity in ["1", "512"] {
+            let config = config_with(&[("SERVER_CHANNEL_PER_ROOM_SIZE", capacity)]).unwrap();
+            config.validate().unwrap();
+            let rooms = RoomService::new(
+                RoomServiceConfig {
+                    command_capacity: config.network.channel_per_room,
+                    max_players: config.app.max_players_per_room,
+                },
+                Arc::new(InMemoryEventPublisher::new(8)),
+            );
+            let (sink, _events) = tokio::sync::mpsc::channel(8);
+            rooms
+                .join_or_create(None, PlayerId(uuid::Uuid::now_v7()), "Alice".into(), sink)
+                .await
+                .unwrap();
+            rooms.close_all("test complete").await.unwrap();
+        }
     }
 
     #[test]

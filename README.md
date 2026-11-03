@@ -60,6 +60,8 @@ cargo run -p longshipx-server-bin
 
 > 配置路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`)。
 
+连接发送队列与房间命令队列容量必须大于 0;`SERVER_CHANNEL_PER_ROOM_SIZE=0` 会在启动配置校验时明确报错,不会延迟至首次建房。
+
 框架自带两个"已完成实现"作参照:HTTP 注册/登录(见 `crates/gateway/src/http/routes.rs`)与 TCP 获取档案命令(见 `crates/gateway/src/tcp/handlers.rs` 的 `handle_get_profile`);可运行客户端示例:`cargo run -p longshipx-server-bin --example quickstart_client -- --token <token> --root-ca "$(mkcert -CAROOT)/rootCA.pem"`。
 
 ---
