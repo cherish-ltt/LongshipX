@@ -303,6 +303,8 @@ TCP 绑定后每次入站业务请求及房间广播都会重新校验原会话 
 
 TCP 接入在 TLS 前占用全局连接名额与单 IP 未鉴权配额;`SERVER_UNAUTH_TIMEOUT_SECS` 是从 TCP 准入到 Bind 完成的一次性期限,包含 TLS 握手和存储查询,无效 Bind 不续期。`SERVER_ACCEPT_CONCURRENCY` 限制并行 TLS 握手,满时拒绝额外接入;错误/取消/超时自动归还未鉴权名额。
 
+`RoomService::leave/leave_all` 等待有界命令队列容量及 Actor 离房完成回执,返回成功时成员清理已执行;最后成员离开后立即移除房间注册项,不依赖后续请求触发惰性回收。`RoomCommand::Leave` 新增完成回执字段。
+
 
 ```bash
 cargo fmt --all -- --check                  # 格式
