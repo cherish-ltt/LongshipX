@@ -34,10 +34,7 @@ impl LoginUseCase {
         player.record_login(chrono::Utc::now());
         self.players_save(&player).await?;
 
-        // 单会话策略:登录即吊销该玩家历史 token(支持"顶号下线",PRD 6.1)。
-        if let Err(err) = self.deps.tokens.revoke_player(player.id()).await {
-            tracing::warn!(error = %err, "吊销历史 token 失败,继续签发新 token");
-        }
+        // 替换由存储端原子完成,不能拆成吊销与签发两个操作。
         let token = self.deps.tokens.create(player.id(), self.token_ttl).await?;
         self.audit_login(&player).await;
 
@@ -183,6 +180,29 @@ mod tests {
         tokens.seed(PlayerId(uuid::Uuid::now_v7()));
         use_case.execute(cmd()).await.unwrap();
         assert!(!tokens.revoked_players().is_empty());
+    }
+
+    #[tokio::test]
+    async fn replacement_failure_aborts_login() {
+        struct FailedReplacement;
+        #[async_trait::async_trait]
+        impl SessionTokenStore for FailedReplacement {
+            async fn create(&self, _: PlayerId, _: Duration) -> Result<String, AppError> {
+                Err(AppError::Storage("replacement failed".into()))
+            }
+            async fn resolve(&self, _: &str) -> Result<Option<PlayerId>, AppError> {
+                unreachable!()
+            }
+            async fn revoke_player(&self, _: PlayerId) -> Result<(), AppError> {
+                panic!("replacement must not be split into revoke/create")
+            }
+        }
+        let (mut use_case, _) = deps_with(AccountStatus::Active);
+        use_case.deps.tokens = Arc::new(FailedReplacement);
+        assert_eq!(
+            use_case.execute(cmd()).await.unwrap_err(),
+            AppError::Storage("replacement failed".into())
+        );
     }
 
     #[tokio::test]

@@ -286,6 +286,10 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+登录签发 token 时由存储原子替换该玩家的旧会话,并发登录完成后最多一个 token 有效。替换失败不返回登录成功;网络超时或取消可能发生在提交之后,此时重试会再次替换会话。Redis 使用单实例 Lua 脚本,不支持跨槽 Redis Cluster。
+
+真实 Redis 回归使用独立测试库:`LONGSHIPX_TEST_REDIS_URL=redis://127.0.0.1:6379/15 cargo test -p longshipx-infrastructure --test session_tokens -- --ignored`;默认测试不连接真实服务。
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint

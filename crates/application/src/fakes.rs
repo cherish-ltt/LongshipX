@@ -198,6 +198,12 @@ impl SessionTokenStore for FakeTokens {
     async fn create(&self, player_id: PlayerId, ttl: Duration) -> Result<String, AppError> {
         let token = format!("token-{}", uuid::Uuid::now_v7());
         let mut state = self.inner.lock().unwrap();
+        if let Some(tokens) = state.by_player.remove(&player_id) {
+            for old in tokens {
+                state.by_token.remove(&old);
+            }
+        }
+        state.revoked.push(player_id);
         state
             .by_token
             .insert(token.clone(), (player_id, Instant::now(), ttl));
