@@ -11,7 +11,7 @@ use longshipx_gateway::http::routes::router;
 use longshipx_gateway::http::state::HttpState;
 use longshipx_infrastructure::cache::InMemoryTokenStore;
 use longshipx_infrastructure::persistence::repositories::{
-    InMemoryAccountRepository, InMemoryPlayerRepository,
+    InMemoryAccountRepository, InMemoryPlayerRepository, InMemoryRegistrationStore,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -54,7 +54,10 @@ fn app() -> axum::Router {
     let state = Arc::new(HttpState {
         register: Arc::new(RegisterUseCase::new(
             accounts.clone(),
-            players.clone(),
+            Arc::new(InMemoryRegistrationStore::new(
+                accounts.clone(),
+                players.clone(),
+            )),
             hasher.clone(),
             audit.clone(),
         )),

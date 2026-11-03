@@ -286,6 +286,11 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+注册使用 `RegistrationStore` 原子创建账号与玩家档案,数据库错误或提交前取消会回滚整个事务;并发同名注册返回冲突。`RegisterUseCase::new` 第二个参数改为注册存储,生产使用 `SeaRegistrationStore`,内存装置使用 `InMemoryRegistrationStore`。提交结果因连接中断未知时,重试仍可能返回用户名冲突,不会新增半套数据。
+
+真实 PostgreSQL 回归须指定专用测试库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test registration -- --ignored`。测试会执行迁移并临时添加故障约束,禁止指向业务数据库。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint
