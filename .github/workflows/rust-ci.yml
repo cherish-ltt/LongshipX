@@ -65,7 +65,8 @@ jobs:
         run: cargo test --workspace --locked --verbose
 
       - name: Bounded transport stress and delay comparison
-        run: cargo test -p longshipx-gateway --test e2e kcp_stress:: --locked -- --ignored --test-threads=1 --nocapture
+        run: |
+          cargo test -p longshipx-gateway --test e2e kcp_stress:: --locked -- --ignored --test-threads=1 --nocapture
 
       - name: Quickstart client process smoke
         run: LONGSHIPX_QUICKSTART_CLIENT_BIN="$PWD/target/debug/examples/quickstart_client" cargo test -p longshipx-gateway --test e2e quickstart_client_process --locked -- --ignored --nocapture
