@@ -135,11 +135,36 @@ impl RoomService {
         let Some(handle) = self.handle_for(room_id).await else {
             return Ok(());
         };
-        handle.try_send(RoomCommand::Leave { player_id, reason })?;
+        let (reply, completed) = oneshot::channel();
+        if let Err(err) = handle
+            .send(RoomCommand::Leave {
+                player_id,
+                reason: reason.clone(),
+                reply,
+            })
+            .await
+        {
+            if handle.is_closed() {
+                self.registry.lock().await.remove(&room_id);
+                return Ok(());
+            }
+            return Err(err);
+        }
+        let left = match completed.await {
+            Ok(result) => result?,
+            Err(_) if handle.is_closed() => false,
+            Err(_) => return Err(AppError::Internal("离房操作未完成".into())),
+        };
+        if handle.is_closed() {
+            self.registry.lock().await.remove(&room_id);
+        }
+        if !left {
+            return Ok(());
+        }
         self.publish(DomainEvent::PlayerLeftRoom {
             room_id,
             player_id,
-            reason: "client leave".into(),
+            reason,
             at: Utc::now(),
         })
         .await;
@@ -149,10 +174,8 @@ impl RoomService {
     /// 断线清理:把玩家从其所在的所有房间移除。
     pub async fn leave_all(&self, player_id: PlayerId, reason: &str) -> Result<(), AppError> {
         for handle in self.live_handles().await {
-            let _ = handle.try_send(RoomCommand::Leave {
-                player_id,
-                reason: reason.to_string(),
-            });
+            self.leave(handle.room_id(), player_id, reason.to_string())
+                .await?;
         }
         Ok(())
     }

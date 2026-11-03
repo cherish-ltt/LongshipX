@@ -31,6 +31,7 @@ pub enum RoomCommand {
     Leave {
         player_id: PlayerId,
         reason: String,
+        reply: oneshot::Sender<Result<bool, AppError>>,
     },
     Close {
         reason: String,
@@ -170,8 +171,13 @@ impl RoomActor {
                 self.handle_join(player_id, nickname, sink, reply);
             },
             RoomCommand::Chat { player_id, text } => self.handle_chat(player_id, text),
-            RoomCommand::Leave { player_id, reason } => {
-                self.handle_leave(player_id, &reason);
+            RoomCommand::Leave {
+                player_id,
+                reason,
+                reply,
+            } => {
+                let outcome = self.handle_leave(player_id, &reason);
+                let _ = reply.send(outcome);
             },
             RoomCommand::Close { reason } => {
                 self.finish(&reason);
@@ -231,7 +237,7 @@ impl RoomActor {
         });
     }
 
-    fn handle_leave(&mut self, player_id: PlayerId, reason: &str) {
+    fn handle_leave(&mut self, player_id: PlayerId, _reason: &str) -> Result<bool, AppError> {
         match self.room.try_leave(player_id) {
             Ok(true) => {
                 // MemberLeft 作为离开回执广播给所有成员(含离开者)。
@@ -244,11 +250,11 @@ impl RoomActor {
                     self.finish("最后一名成员已离开");
                 }
                 self.members.remove(&player_id);
+                Ok(true)
             },
-            Ok(false) => {},
-            Err(err) => tracing::warn!(error = %err, "离开房间被领域规则拒绝"),
+            Ok(false) => Ok(false),
+            Err(err) => Err(err.into()),
         }
-        let _ = reason;
     }
 
     /// 向全体成员广播;投递策略:通道满则丢弃该成员的这条消息(PRD 8.5)。
@@ -394,6 +400,7 @@ mod tests {
             .send(RoomCommand::Leave {
                 player_id: p1,
                 reason: "主动退出".into(),
+                reply: oneshot::channel().0,
             })
             .await
             .unwrap();
@@ -409,6 +416,7 @@ mod tests {
             .send(RoomCommand::Leave {
                 player_id: p2,
                 reason: "主动退出".into(),
+                reply: oneshot::channel().0,
             })
             .await
             .unwrap();
