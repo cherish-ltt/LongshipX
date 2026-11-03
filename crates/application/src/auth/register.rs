@@ -2,14 +2,14 @@
 
 use crate::dto::{RegisterCommand, RegisterResult};
 use crate::error::AppError;
-use crate::ports::{AuditLogger, PasswordHasher};
+use crate::ports::{AuditLogger, PasswordHasher, RegistrationStore};
 use longshipx_domain::shared::value::{Nickname, PasswordHash, PlainPassword, Username};
-use longshipx_domain::{Account, AccountRepository, Player, PlayerRepository, RepoError};
+use longshipx_domain::{Account, AccountRepository, Player};
 use std::sync::Arc;
 
 pub struct RegisterUseCase {
     accounts: Arc<dyn AccountRepository>,
-    players: Arc<dyn PlayerRepository>,
+    registration: Arc<dyn RegistrationStore>,
     hasher: Arc<dyn PasswordHasher>,
     audit: Arc<dyn AuditLogger>,
 }
@@ -17,13 +17,13 @@ pub struct RegisterUseCase {
 impl RegisterUseCase {
     pub fn new(
         accounts: Arc<dyn AccountRepository>,
-        players: Arc<dyn PlayerRepository>,
+        registration: Arc<dyn RegistrationStore>,
         hasher: Arc<dyn PasswordHasher>,
         audit: Arc<dyn AuditLogger>,
     ) -> Self {
         Self {
             accounts,
-            players,
+            registration,
             hasher,
             audit,
         }
@@ -47,8 +47,7 @@ impl RegisterUseCase {
         let account = Account::register(username, hash, chrono::Utc::now());
         let player = Player::create(account.id(), nickname, chrono::Utc::now());
 
-        self.accounts.save(&account).await?;
-        self.players.save(&player).await?;
+        self.registration.register(&account, &player).await?;
         self.audit_success(&player).await;
 
         Ok(RegisterResult {
@@ -69,21 +68,14 @@ impl RegisterUseCase {
             tracing::warn!(error = %err, "注册审计记录失败");
         }
     }
-
-    /// 仓储冲突统一转换为应用层 Conflict(用户名唯一约束兜底)。
-    #[allow(dead_code)]
-    fn map_conflict(err: RepoError) -> AppError {
-        match err {
-            RepoError::Conflict(_) => AppError::Conflict("用户名已被占用".into()),
-            other => other.into(),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::error::AppError;
-    use crate::fakes::{FailingHasher, FakeAccounts, FakeAudit, FakeHasher, FakePlayers};
+    use crate::fakes::{
+        FailingHasher, FakeAccounts, FakeAudit, FakeHasher, FakePlayers, FakeRegistration,
+    };
     use crate::{RegisterCommand, RegisterUseCase};
     use std::sync::Arc;
 
@@ -93,7 +85,12 @@ mod tests {
         let hasher = Arc::new(FakeHasher);
         let audit = Arc::new(FakeAudit::default());
         (
-            RegisterUseCase::new(accounts.clone(), players, hasher, audit.clone()),
+            RegisterUseCase::new(
+                accounts.clone(),
+                Arc::new(FakeRegistration(accounts.clone(), players)),
+                hasher,
+                audit.clone(),
+            ),
             accounts,
             audit,
         )
@@ -154,8 +151,42 @@ mod tests {
         let players = Arc::new(FakePlayers::default());
         let hasher = Arc::new(FailingHasher);
         let audit = Arc::new(FakeAudit::default());
-        let use_case = RegisterUseCase::new(accounts, players, hasher, audit);
+        let use_case = RegisterUseCase::new(
+            accounts.clone(),
+            Arc::new(FakeRegistration(accounts, players)),
+            hasher,
+            audit,
+        );
         let err = use_case.execute(cmd()).await.unwrap_err();
         assert!(matches!(err, AppError::Internal(_)));
+    }
+
+    #[tokio::test]
+    async fn storage_failure_does_not_write_or_audit_a_partial_registration() {
+        struct Unavailable;
+        #[async_trait::async_trait]
+        impl crate::ports::RegistrationStore for Unavailable {
+            async fn register(
+                &self,
+                _: &longshipx_domain::Account,
+                _: &longshipx_domain::Player,
+            ) -> Result<(), AppError> {
+                Err(AppError::Storage("unavailable".into()))
+            }
+        }
+        let accounts = Arc::new(FakeAccounts::default());
+        let audit = Arc::new(FakeAudit::default());
+        let use_case = RegisterUseCase::new(
+            accounts.clone(),
+            Arc::new(Unavailable),
+            Arc::new(FakeHasher),
+            audit.clone(),
+        );
+        assert!(matches!(
+            use_case.execute(cmd()).await,
+            Err(AppError::Storage(_))
+        ));
+        assert_eq!(accounts.len(), 0);
+        assert_eq!(audit.count.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 }

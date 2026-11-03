@@ -2,12 +2,49 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use longshipx_application::{AppError, ports::RegistrationStore};
 use longshipx_domain::shared::value::Nickname;
 use longshipx_domain::{
     Account, AccountId, AccountRepository, Player, PlayerId, PlayerRepository, RepoError,
 };
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+pub struct InMemoryRegistrationStore {
+    accounts: Arc<InMemoryAccountRepository>,
+    players: Arc<InMemoryPlayerRepository>,
+}
+
+impl InMemoryRegistrationStore {
+    pub fn new(
+        accounts: Arc<InMemoryAccountRepository>,
+        players: Arc<InMemoryPlayerRepository>,
+    ) -> Self {
+        Self { accounts, players }
+    }
+}
+
+#[async_trait]
+impl RegistrationStore for InMemoryRegistrationStore {
+    async fn register(&self, account: &Account, player: &Player) -> Result<(), AppError> {
+        let mut accounts = self.accounts.accounts.lock().expect("account repo 锁中毒");
+        let mut players = self.players.players.lock().expect("player repo 锁中毒");
+        if accounts.contains_key(&account.id().0)
+            || accounts
+                .values()
+                .any(|stored| stored.username() == account.username())
+            || players.contains_key(&player.id().0)
+            || players
+                .values()
+                .any(|stored| stored.account_id() == player.account_id())
+        {
+            return Err(AppError::Conflict("注册数据已存在".into()));
+        }
+        accounts.insert(account.id().0, account.clone());
+        players.insert(player.id().0, player.clone());
+        Ok(())
+    }
+}
 
 /// 内存账号仓储。
 #[derive(Default)]
