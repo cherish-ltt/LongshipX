@@ -226,6 +226,13 @@ pub fn app_error_notification(err: AppError) -> OutboundMessage {
         AppError::Conflict(msg) => (ERR_CONFLICT, msg),
         AppError::Busy => (ERR_SERVER_BUSY, "服务繁忙,请稍后重试".into()),
         AppError::RateLimited => (ERR_RATE_LIMITED, "请求过于频繁".into()),
+        AppError::PostCommit(_) => {
+            tracing::error!(error = %err, "提交后事件发布失败");
+            (
+                ERR_PROTOCOL,
+                "数据已提交,事件发布失败,请勿重试整个操作".into(),
+            )
+        },
         AppError::Storage(_) | AppError::Internal(_) => {
             tracing::error!(error = %err, "应用层内部错误");
             (ERR_PROTOCOL, "服务器内部错误".into())

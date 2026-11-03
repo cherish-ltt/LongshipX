@@ -50,6 +50,13 @@ impl From<AppError> for ApiError {
                 "服务繁忙,请稍后重试".into(),
             ),
             AppError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "请求过于频繁".into()),
+            AppError::PostCommit(_) => {
+                tracing::error!(error = %err, "提交后事件发布失败");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "数据已提交,事件发布失败,请勿重试整个操作".into(),
+                )
+            },
             AppError::Storage(_) | AppError::Internal(_) => {
                 // 🔴 内部细节只进日志,不回给客户端。
                 tracing::error!(error = %err, "HTTP 处理内部错误");

@@ -289,6 +289,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 注册使用 `RegistrationStore` 原子创建账号与玩家档案,数据库错误或提交前取消会回滚整个事务;并发同名注册返回冲突。`RegisterUseCase::new` 第二个参数改为注册存储,生产使用 `SeaRegistrationStore`,内存装置使用 `InMemoryRegistrationStore`。提交结果因连接中断未知时,重试仍可能返回用户名冲突,不会新增半套数据。
 
 真实 PostgreSQL 回归须指定专用测试库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test registration -- --ignored`。测试会执行迁移并临时添加故障约束,禁止指向业务数据库。
+经验更新通过 `PlayerRepository::gain_exp` 原子读取并提交;登录使用 `record_login` 只更新登录时间,不再保存陈旧玩家快照。外部仓储实现须实现这两个方法。升级事件仅在提交后发布;发布失败返回 `AppError::PostCommit`,调用方不得重试整个经验奖励。未引入 outbox,发布失败仍需要业务侧补发。
+
+真实 PostgreSQL 回归使用专用库:`LONGSHIPX_TEST_PG_URL=postgres://postgres@127.0.0.1:5432/longshipx_test cargo test -p longshipx-infrastructure --test player_updates -- --ignored`;测试执行迁移及故障约束,禁止连接业务库。
 
 
 ```bash
