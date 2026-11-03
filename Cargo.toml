@@ -38,7 +38,7 @@ longshipx-migration = { path = "migration", version = "=0.3.0" }
 
 # ── 异步运行时与网络 ──
 tokio = "=1.52.3"
-kcp-ovo = { version = "=0.5.0", default-features = false }
+kcp-ovo = { version = "=0.5.1", default-features = false }
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
 socket2 = "=0.6.5"
@@ -87,8 +87,6 @@ metrics-exporter-prometheus = "=0.18.3"
 tower = { version = "=0.5.3", features = ["util"] }
 http-body-util = "=0.1.5"
 rcgen = "=0.14.10"
-# Inspect the allocator selected by kcp-ovo without declaring a second global allocator.
-libmimalloc-sys = { version = "=0.1.49", features = ["extended"] }
 
 # ── 基准测试(harness = false 的 bench 目标专用)──
 criterion = "=0.8.2"

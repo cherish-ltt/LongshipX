@@ -965,12 +965,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cty"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
-
-[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1837,14 +1831,13 @@ dependencies = [
 
 [[package]]
 name = "kcp-ovo"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75197a253c354e4b97fdf5eb931f22b500bf36ba4041bfbe23c0f19d2d4f3740"
+checksum = "1f113852ae221561080d3bbeb42056b0008f7a7535e82fe5b1750eebeefbc5d8"
 dependencies = [
  "bytes",
  "dashmap",
  "log",
- "mimalloc",
  "tokio",
 ]
 
@@ -1933,16 +1926,6 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
-
-[[package]]
-name = "libmimalloc-sys"
-version = "0.1.49"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
-dependencies = [
- "cc",
- "cty",
-]
 
 [[package]]
 name = "libsqlite3-sys"
@@ -2082,7 +2065,6 @@ dependencies = [
  "criterion",
  "http-body-util",
  "libc",
- "libmimalloc-sys",
  "longshipx-application",
  "longshipx-domain",
  "longshipx-infrastructure",
@@ -2140,7 +2122,6 @@ dependencies = [
  "criterion",
  "getrandom 0.4.3",
  "kcp-ovo",
- "libmimalloc-sys",
  "rcgen",
  "rustls",
  "socket2",
@@ -2321,15 +2302,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "mimalloc"
-version = "0.1.51"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebca48a43116bc25f18a61360f1be98412f50cc218f5e52c823086b999a4a21a"
-dependencies = [
- "libmimalloc-sys",
 ]
 
 [[package]]

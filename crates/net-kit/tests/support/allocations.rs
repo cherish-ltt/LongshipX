@@ -1,39 +1,26 @@
-use libmimalloc_sys::{mi_block_visit_fun, mi_heap_area_t, mi_heap_t, mi_theap_t};
-use std::ffi::c_void;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-unsafe extern "C" {
-    fn mi_theap_get_default() -> *mut mi_theap_t;
-    fn mi_theap_visit_blocks(
-        heap: *const mi_theap_t,
-        blocks: bool,
-        visitor: mi_block_visit_fun,
-        arg: *mut c_void,
-    ) -> bool;
+struct CountedAllocator;
+static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+unsafe impl GlobalAlloc for CountedAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc(layout) };
+        if !ptr.is_null() {
+            LIVE_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        }
+        ptr
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE_BYTES.fetch_sub(layout.size() as u64, Ordering::Relaxed);
+        unsafe { System.dealloc(ptr, layout) };
+    }
 }
 
-// Inspect only this thread's heap; callers use a current-thread runtime.
+#[global_allocator]
+static ALLOCATOR: CountedAllocator = CountedAllocator;
+
 pub fn live_bytes() -> u64 {
-    unsafe extern "C" fn visit(
-        _: *const mi_heap_t,
-        area: *const mi_heap_area_t,
-        _: *mut c_void,
-        _: usize,
-        total: *mut c_void,
-    ) -> bool {
-        unsafe {
-            *total.cast::<u64>() += ((*area).used * (*area).block_size) as u64;
-        }
-        true
-    }
-    let mut total = 0u64;
-    let success = unsafe {
-        mi_theap_visit_blocks(
-            mi_theap_get_default(),
-            false,
-            Some(visit),
-            (&mut total as *mut u64).cast(),
-        )
-    };
-    assert!(success, "mimalloc heap snapshot failed");
-    total
+    LIVE_BYTES.load(Ordering::Relaxed)
 }

@@ -1,10 +1,28 @@
 use longshipx_net_kit::{AcceptLoopConfig, Transport, accept_loop_with};
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-#[path = "support/allocations.rs"]
-mod allocations;
+struct CountedAllocator;
+static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for CountedAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc(layout) };
+        if !ptr.is_null() {
+            LIVE_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+        }
+        ptr
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
+        unsafe { System.dealloc(ptr, layout) };
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountedAllocator = CountedAllocator;
 
 struct FakeTransport(tokio::sync::Mutex<tokio::sync::mpsc::Receiver<tokio::io::DuplexStream>>);
 
@@ -42,7 +60,7 @@ async fn completed_connections_must_not_accumulate_task_allocations() {
             }
         },
     ));
-    let start = allocations::live_bytes();
+    let start = LIVE_BYTES.load(Ordering::Relaxed);
     for round in 1..=10_000 {
         let (local, peer) = tokio::io::duplex(1);
         drop(peer);
@@ -56,11 +74,11 @@ async fn completed_connections_must_not_accumulate_task_allocations() {
         .unwrap();
         tokio::task::yield_now().await;
     }
-    let retained = allocations::live_bytes().saturating_sub(start);
+    let retained = LIVE_BYTES.load(Ordering::Relaxed).saturating_sub(start);
     shutdown_tx.send_replace(true);
     server.await.unwrap();
     tokio::task::yield_now().await;
-    let after_shutdown = allocations::live_bytes().saturating_sub(start);
+    let after_shutdown = LIVE_BYTES.load(Ordering::Relaxed).saturating_sub(start);
     eprintln!("completed=10000 retained_bytes={retained} after_shutdown_bytes={after_shutdown}");
     assert!(
         retained < 100_000,

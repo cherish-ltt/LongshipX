@@ -25,7 +25,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-libmimalloc-sys = { workspace = true }
 # 异步单测
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # 测试用自签证书生成

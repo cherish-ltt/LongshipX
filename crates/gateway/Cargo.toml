@@ -37,7 +37,6 @@ metrics = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-libmimalloc-sys = { workspace = true }
 # 路由层单测(oneshot 请求)
 tower = { workspace = true }
 http-body-util = { workspace = true }

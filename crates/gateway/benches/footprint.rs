@@ -3,14 +3,16 @@
 //! 不使用 criterion(内存足迹不是时间量):以"阶梯建连 + 快照"输出报告。
 //! 两个指标:
 //! * 进程 RSS —— macOS 走 `proc_pidinfo`,Linux 走 `/proc/self/statm`;
-//! * 活跃堆分配字节数 —— mimalloc 当前线程的活跃块字节数(包含分配器尺寸取整)。
+//! * 活跃堆分配字节数 —— 全局计数分配器的活跃申请字节数。
 //!
 //! 单进程内同时容纳服务端与客户端两端,因此"每连接成本"包含连接的两半。
 //! 服务端启用并发握手管线、客户端建连压成固定并发,规避系统 backlog 限制
 //! (macOS `kern.ipc.somaxconn=128`);进程先提升 fd 上限(默认 256 不够用)。
 //! 运行:`cargo bench --bench footprint -p longshipx-gateway`
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use longshipx_application::ports::SessionTokenStore as _;
@@ -44,8 +46,27 @@ const MAX_FRAME_SIZE: usize = 65_536;
 /// 服务端 TLS 握手并行度(同 tcp_room 基准)。
 const ACCEPT_CONCURRENCY: u32 = 512;
 
-#[path = "../../net-kit/tests/support/allocations.rs"]
-mod allocations;
+static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+struct CountingAlloc;
+
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc(layout) };
+        if !ptr.is_null() {
+            LIVE_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE_BYTES.fetch_sub(layout.size() as u64, Ordering::Relaxed);
+        unsafe { System.dealloc(ptr, layout) };
+    }
+}
+
+#[global_allocator]
+static GLOBAL: CountingAlloc = CountingAlloc;
 
 #[cfg(target_os = "macos")]
 fn resident_bytes() -> u64 {
@@ -270,7 +291,9 @@ struct Snapshot {
 /// 打印一行相对基线的增量报告。
 fn report_row(baseline: &Snapshot, conns: usize) {
     let rss = resident_bytes().saturating_sub(baseline.rss);
-    let live = allocations::live_bytes().saturating_sub(baseline.live);
+    let live = LIVE_BYTES
+        .load(Ordering::Relaxed)
+        .saturating_sub(baseline.live);
     let conns_f64 = conns.max(1) as f64;
     println!(
         "| {:>6} | {:>10.1} | {:>14.1} | {:>14.1} | {:>15.1} |",
@@ -287,10 +310,10 @@ async fn run() {
     tokio::time::sleep(SETTLE).await;
     let baseline = Snapshot {
         rss: resident_bytes(),
-        live: allocations::live_bytes(),
+        live: LIVE_BYTES.load(Ordering::Relaxed),
     };
 
-    println!("连接内存足迹(loopback TLS,单线程运行时,单进程含客户端与服务端):");
+    println!("连接内存足迹(loopback TLS,单进程含客户端与服务端):");
     println!("| 连接数 | ΔRSS (MiB) | 每连接 RSS (KiB) | 活跃堆分配 (MiB) | 每连接分配 (KiB) |");
     println!("| --- | --- | --- | --- | --- |");
     report_row(&baseline, 0);
@@ -313,7 +336,7 @@ async fn run() {
 
 fn main() {
     raise_fd_limit();
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("构建运行时");
