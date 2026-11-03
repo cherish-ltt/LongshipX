@@ -32,12 +32,13 @@ use tower::ServiceExt as _;
 /// 可逆假哈希器:注册→登录全链路无需真实 argon2 开销(与 http.rs 测试装置一致)。
 struct PlainHasher;
 
+#[async_trait::async_trait]
 impl PasswordHasher for PlainHasher {
-    fn hash(&self, password: &str) -> Result<String, AppError> {
+    async fn hash(&self, password: &str) -> Result<String, AppError> {
         Ok(format!("plain$${password}"))
     }
 
-    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
+    async fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
         Ok(hash == format!("plain$${password}"))
     }
 }
@@ -169,7 +170,7 @@ fn bench_http(c: &mut Criterion) {
     });
 
     // 生产哈希器:同一登录链路在 argon2id(8MiB/2 轮)下的真实成本。
-    let argon_env = setup(Arc::new(Argon2PasswordHasher::new(8192, 2, 1).unwrap()));
+    let argon_env = setup(Arc::new(Argon2PasswordHasher::new(8192, 2, 1, 2).unwrap()));
     group.bench_function("login_argon2_8MiB", |b| {
         b.iter(|| {
             argon_env.rt.block_on(async {

@@ -18,11 +18,12 @@ use std::time::Duration;
 use tokio::sync::Barrier;
 
 struct Hasher;
+#[async_trait::async_trait]
 impl PasswordHasher for Hasher {
-    fn hash(&self, password: &str) -> Result<String, AppError> {
+    async fn hash(&self, password: &str) -> Result<String, AppError> {
         Ok(format!("test:{password}"))
     }
-    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
+    async fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
         Ok(hash == format!("test:{password}"))
     }
 }

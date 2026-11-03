@@ -143,6 +143,9 @@ APP_PASSWORD_MEMORY_KB=19456
 # argon2id 并行度
 APP_PASSWORD_PARALLELISM=4
 
+# 同时执行的密码计算数;超出直接返回 503,不排队
+APP_PASSWORD_MAX_CONCURRENCY=2
+
 # 单房间最大玩家数(单主城地图作为一个 room 时可调到数千)
 APP_MAX_PLAYERS_PER_ROOM=64
 

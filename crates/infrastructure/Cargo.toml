@@ -29,7 +29,7 @@ chrono = { workspace = true }
 # audit_logs.detail JSONB 列
 serde_json = { workspace = true }
 # 进程内事件分发与内存存储
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "rt"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

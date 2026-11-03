@@ -91,6 +91,7 @@ pub struct AppConfig {
     pub password_iterations: u32,
     pub password_memory_kb: u32,
     pub password_parallelism: u32,
+    pub password_max_concurrency: usize,
     pub max_players_per_room: u32,
     pub shutdown_timeout_secs: u64,
 }
@@ -166,6 +167,14 @@ impl Config {
             return Err(ConfigError::Invalid {
                 name: "SERVER_CHANNEL_PER_CONN_SIZE",
                 reason: "发送队列必须有界且大于 0(PRD 8.5)".into(),
+            });
+        }
+        if self.app.password_max_concurrency == 0
+            || self.app.password_max_concurrency > tokio::sync::Semaphore::MAX_PERMITS
+        {
+            return Err(ConfigError::Invalid {
+                name: "APP_PASSWORD_MAX_CONCURRENCY",
+                reason: "must be a positive semaphore capacity".into(),
             });
         }
         Ok(())
@@ -254,6 +263,7 @@ fn app_from_lookup(lookup: &mut Lookup<'_>) -> ConfigResult<AppConfig> {
         password_iterations: env_u32(lookup, "APP_PASSWORD_ITERATIONS", 3)?,
         password_memory_kb: env_u32(lookup, "APP_PASSWORD_MEMORY_KB", 19_456)?,
         password_parallelism: env_u32(lookup, "APP_PASSWORD_PARALLELISM", 4)?,
+        password_max_concurrency: env_usize(lookup, "APP_PASSWORD_MAX_CONCURRENCY", 2)?,
         max_players_per_room: env_u32(lookup, "APP_MAX_PLAYERS_PER_ROOM", 64)?,
         shutdown_timeout_secs: env_u64(lookup, "APP_SHUTDOWN_TIMEOUT_SECS", 30)?,
     })
@@ -392,12 +402,28 @@ mod tests {
         assert!(!config.log.otel_enabled);
         assert_eq!(config.log.metrics_port, 9090);
         assert_eq!(config.app.session_token_ttl_secs, 604_800);
+        assert_eq!(config.app.password_max_concurrency, 2);
         assert_eq!(config.app.password_params(), (19_456, 3, 4));
         assert_eq!(config.app.session_token_ttl(), Duration::from_secs(604_800));
         assert_eq!(config.app.max_players_per_room, 64);
         assert_eq!(config.app.shutdown_timeout_secs, 30);
         assert!(config.is_database_url_placeholder());
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn password_concurrency_is_configurable_and_positive() {
+        let config = config_with(&[("APP_PASSWORD_MAX_CONCURRENCY", "3")]).unwrap();
+        assert_eq!(config.app.password_max_concurrency, 3);
+        assert!(config.validate().is_ok());
+        let config = config_with(&[("APP_PASSWORD_MAX_CONCURRENCY", "0")]).unwrap();
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::Invalid {
+                name: "APP_PASSWORD_MAX_CONCURRENCY",
+                ..
+            })
+        ));
     }
 
     #[test]
