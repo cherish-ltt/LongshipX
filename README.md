@@ -329,6 +329,13 @@ cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 
 * CI(GitHub Actions)执行 `fmt --check` / `clippy -D warnings` / `build` / `test`,见 `.github/workflows/rust-ci.yml`;
 * 提交前请本地跑通上述"开发与测试"命令。
 
+## 密码计算并发
+
+注册/登录的 Argon2 运算在阻塞线程池运行，不占用异步调度线程。
+`APP_PASSWORD_MAX_CONCURRENCY` 默认 2，限制同一共享哈希器中 hash/verify 的合计并发；
+超限立即返回 HTTP 503，不累积等待队列。请求取消不会提前释放仍在计算的名额。
+`PasswordHasher` 端口改为异步，`Argon2PasswordHasher::new` 第四参数为并发上限。
+
 ## License
 
 MIT OR Apache-2.0(见 `LICENSE-MIT` / `LICENSE-APACHE`)。

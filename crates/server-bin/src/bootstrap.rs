@@ -115,6 +115,7 @@ fn build_services(
         memory_kb,
         iterations,
         parallelism,
+        config.app.password_max_concurrency,
     )?);
     let publisher = Arc::new(longshipx_infrastructure::events::InMemoryEventPublisher::new(256));
     let rooms = Arc::new(RoomService::new(

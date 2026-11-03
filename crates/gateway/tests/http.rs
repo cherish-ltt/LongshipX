@@ -21,12 +21,13 @@ use tower::ServiceExt as _;
 /// 可逆假哈希器:注册→登录全链路无需真实 argon2 开销。
 struct PlainHasher;
 
+#[async_trait::async_trait]
 impl PasswordHasher for PlainHasher {
-    fn hash(&self, password: &str) -> Result<String, AppError> {
+    async fn hash(&self, password: &str) -> Result<String, AppError> {
         Ok(format!("plain$${password}"))
     }
 
-    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
+    async fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
         Ok(hash == format!("plain$${password}"))
     }
 }
@@ -284,4 +285,70 @@ async fn me_requires_bearer_token() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn audit_auth_hash_must_not_block_unrelated_runtime_tasks() {
+    use longshipx_application::{LoginCommand, RegisterCommand};
+    let accounts = Arc::new(InMemoryAccountRepository::new());
+    let players = Arc::new(InMemoryPlayerRepository::new());
+    let hasher = Arc::new(
+        longshipx_infrastructure::password::Argon2PasswordHasher::new(19456, 3, 4, 2).unwrap(),
+    );
+    let audit = Arc::new(NullAudit);
+    let register = RegisterUseCase::new(
+        accounts.clone(),
+        players.clone(),
+        hasher.clone(),
+        audit.clone(),
+    );
+    register
+        .execute(RegisterCommand {
+            username: "audit_runtime".into(),
+            password: "test-local-auth".into(),
+            nickname: "Alice".into(),
+        })
+        .await
+        .unwrap();
+    let usecase = LoginUseCase::new(
+        LoginDependencies {
+            accounts,
+            players,
+            tokens: Arc::new(InMemoryTokenStore::new()),
+            hasher: hasher.clone(),
+            audit,
+        },
+        Duration::from_secs(60),
+    );
+    let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let other_ticks = ticks.clone();
+    let heartbeat = tokio::spawn(async move {
+        loop {
+            tokio::task::yield_now().await;
+            other_ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    tokio::task::yield_now().await;
+    let before = ticks.load(std::sync::atomic::Ordering::SeqCst);
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        usecase
+            .execute(LoginCommand {
+                username: "audit_runtime".into(),
+                password: "test-local-auth".into(),
+            })
+            .await
+            .unwrap();
+    }
+    let after = ticks.load(std::sync::atomic::Ordering::SeqCst);
+    println!(
+        "10 real Argon2 logins elapsed={:?}, unrelated_task_progress={}",
+        start.elapsed(),
+        after - before
+    );
+    heartbeat.abort();
+    assert!(
+        after > before,
+        "async login starved every other task on its runtime worker"
+    );
 }

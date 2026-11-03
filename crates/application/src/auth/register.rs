@@ -43,7 +43,7 @@ impl RegisterUseCase {
             return Err(AppError::Conflict("用户名已被占用".into()));
         }
 
-        let hash = PasswordHash::new(self.hasher.hash(password.expose())?);
+        let hash = PasswordHash::new(self.hasher.hash(password.expose()).await?);
         let account = Account::register(username, hash, chrono::Utc::now());
         let player = Player::create(account.id(), nickname, chrono::Utc::now());
 

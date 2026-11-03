@@ -34,12 +34,13 @@ pub fn deterministic_account_id(username: &str) -> AccountId {
 /// 恒定哈希器:hash 输出可逆格式,verify 按格式比对。
 pub struct FakeHasher;
 
+#[async_trait::async_trait]
 impl PasswordHasher for FakeHasher {
-    fn hash(&self, password: &str) -> Result<String, AppError> {
+    async fn hash(&self, password: &str) -> Result<String, AppError> {
         Ok(format!("fake$$${password}"))
     }
 
-    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
+    async fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
         Ok(hash == format!("fake$$${password}"))
     }
 }
@@ -47,12 +48,13 @@ impl PasswordHasher for FakeHasher {
 /// 始终失败的哈希器:验证用例的故障路径。
 pub struct FailingHasher;
 
+#[async_trait::async_trait]
 impl PasswordHasher for FailingHasher {
-    fn hash(&self, _password: &str) -> Result<String, AppError> {
+    async fn hash(&self, _password: &str) -> Result<String, AppError> {
         Err(AppError::Internal("hasher unavailable".into()))
     }
 
-    fn verify(&self, _password: &str, _hash: &str) -> Result<bool, AppError> {
+    async fn verify(&self, _password: &str, _hash: &str) -> Result<bool, AppError> {
         Err(AppError::Internal("hasher unavailable".into()))
     }
 }

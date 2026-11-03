@@ -19,11 +19,12 @@ pub trait SessionTokenStore: Send + Sync {
 }
 
 /// 密码哈希器:argon2id(PRD 第 10 章),实现于 infrastructure。
+#[async_trait]
 pub trait PasswordHasher: Send + Sync {
-    fn hash(&self, password: &str) -> Result<String, AppError>;
+    async fn hash(&self, password: &str) -> Result<String, AppError>;
 
     /// 恒定时间校验;哈希格式错误返回 Err,密码错误返回 Ok(false)。
-    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError>;
+    async fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError>;
 }
 
 /// 操作审计(PRD 7.3 audit_logs):线上排查与申诉依赖,允许失败不阻断主流程。

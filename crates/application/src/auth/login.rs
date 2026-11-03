@@ -25,7 +25,8 @@ impl LoginUseCase {
         if !self
             .deps
             .hasher
-            .verify(&cmd.password, account.password_hash().expose())?
+            .verify(&cmd.password, account.password_hash().expose())
+            .await?
         {
             return Err(AppError::Unauthorized("用户名或密码错误".into()));
         }
