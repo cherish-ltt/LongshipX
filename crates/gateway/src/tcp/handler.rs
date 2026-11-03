@@ -55,7 +55,7 @@ pub async fn handle_connection(
         conn_id,
         peer_ip: peer.ip(),
         outbound: outbound.clone(),
-        room_tx,
+        room_tx: room_tx.into(),
         auth: Arc::new(parking_lot::Mutex::new(Default::default())),
         deps: deps.clone(),
     };
@@ -102,6 +102,12 @@ async fn run_read_loop(
         };
         let deadline = tokio::time::Instant::now() + timeout;
         tokio::select! {
+            biased;
+            _ = ctx.outbound.disconnected() => return,
+            _ = ctx.room_tx.failed() => {
+                ctx.outbound.disconnect();
+                return;
+            },
             frame = reader.read_frame() => match frame {
                 Ok(Some(frame)) => {
                     session.touch_heartbeat(chrono::Utc::now());
@@ -199,11 +205,46 @@ async fn room_event_translator(
         let message = OutboundMessage::RoomEvent(room_event_to_notification(event));
         let Ok(frame) = codec.encode(&message) else {
             tracing::error!("房间事件编码失败");
-            continue;
+            outbound.disconnect();
+            return;
         };
         if outbound.try_send_frame(frame).is_err() {
             tracing::debug!("发送队列不可用,房间事件翻译退出");
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod audit_network_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn audit_room_queue_full_must_close_outbound() {
+        let (wire_tx, mut wire_rx) = mpsc::channel(1);
+        let outbound = longshipx_net_kit::OutboundSender::new(wire_tx);
+        outbound
+            .try_send_frame(longshipx_net_kit::Frame::new(1, vec![]))
+            .unwrap();
+        let (events_tx, events_rx) = mpsc::channel(1);
+        let event = longshipx_application::RoomEvent::Closed {
+            room_id: longshipx_domain::RoomId(uuid::Uuid::now_v7()),
+            reason: "audit".into(),
+        };
+        events_tx.send(event).await.unwrap();
+        room_event_translator(
+            events_rx,
+            outbound.clone(),
+            Arc::new(longshipx_protocol::GameCodec),
+        )
+        .await;
+        assert!(events_tx.is_closed());
+        let closed = outbound.is_closed();
+        assert!(wire_rx.recv().await.is_some());
+        let later_send = outbound.try_send_frame(longshipx_net_kit::Frame::new(2, vec![]));
+        assert!(
+            closed && later_send.is_err(),
+            "translator exited but connection outbound remains usable: closed={closed}, later_send={later_send:?}"
+        );
     }
 }

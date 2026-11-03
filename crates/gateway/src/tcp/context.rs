@@ -10,7 +10,6 @@ use longshipx_protocol::Router;
 use parking_lot::Mutex;
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// 已鉴权玩家信息(绑定成功后写入)。
@@ -52,7 +51,7 @@ pub struct ConnContext {
     pub peer_ip: IpAddr,
     pub outbound: OutboundSender,
     /// 本连接的房间事件入口(加入房间时作为成员 sink 交给 Actor)。
-    pub room_tx: mpsc::Sender<longshipx_application::RoomEvent>,
+    pub room_tx: longshipx_application::RoomEventSink,
     pub auth: Arc<Mutex<AuthState>>,
     pub deps: Arc<GatewayDeps>,
 }

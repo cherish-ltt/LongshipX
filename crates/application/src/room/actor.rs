@@ -2,9 +2,9 @@
 //!
 //! * 状态修改只发生在 Actor 内部,天然无锁、可并行(不同房间互不影响);
 //! * 广播通过每个成员连接各自的 `RoomEvent` 有界通道投递;
-//! * 🔴 广播通道满即丢弃该条消息(慢消费者不影响其他成员,PRD 8.5 策略一),
-//!   需要应答的命令(join)通过 oneshot 把结果返回调用方。
+//! * 广播通道满或关闭时通过独立信号通知连接断开,不阻塞其他成员。
 
+use super::RoomEventSink;
 use crate::error::AppError;
 use longshipx_domain::{PlayerId, Room, RoomId};
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ pub enum RoomCommand {
     Join {
         player_id: PlayerId,
         nickname: String,
-        sink: mpsc::Sender<RoomEvent>,
+        sink: RoomEventSink,
         reply: oneshot::Sender<Result<(), AppError>>,
     },
     Chat {
@@ -116,7 +116,7 @@ impl RoomHandle {
 
 struct Member {
     nickname: String,
-    sink: mpsc::Sender<RoomEvent>,
+    sink: RoomEventSink,
 }
 
 pub struct RoomActor {
@@ -185,7 +185,7 @@ impl RoomActor {
         &mut self,
         player_id: PlayerId,
         nickname: String,
-        sink: mpsc::Sender<RoomEvent>,
+        sink: RoomEventSink,
         reply: oneshot::Sender<Result<(), AppError>>,
     ) {
         let mut newly_joined = false;
@@ -251,15 +251,10 @@ impl RoomActor {
         let _ = reason;
     }
 
-    /// 向全体成员广播;投递策略:通道满则丢弃该成员的这条消息(PRD 8.5)。
+    /// Queue failure is signalled out-of-band so a lost receipt cannot leave a live connection.
     fn broadcast(&self, event: RoomEvent) {
         for member in self.members.values() {
-            if member.sink.try_send(event.clone()).is_err() {
-                tracing::debug!(
-                    room = %self.room.id(),
-                    "成员事件通道满,丢弃该成员的这条广播"
-                );
-            }
+            member.sink.try_send(event.clone());
         }
     }
 
@@ -295,7 +290,7 @@ mod tests {
             .send(RoomCommand::Join {
                 player_id,
                 nickname: "n".into(),
-                sink: tx,
+                sink: tx.into(),
                 reply: reply_tx,
             })
             .await
@@ -315,7 +310,7 @@ mod tests {
             .send(RoomCommand::Join {
                 player_id: p1,
                 nickname: "a".into(),
-                sink: tx1,
+                sink: tx1.into(),
                 reply: reply1,
             })
             .await
@@ -331,7 +326,7 @@ mod tests {
             .send(RoomCommand::Join {
                 player_id: p2,
                 nickname: "b".into(),
-                sink: tx2,
+                sink: tx2.into(),
                 reply: reply2,
             })
             .await
@@ -446,7 +441,7 @@ mod tests {
             .send(RoomCommand::Join {
                 player_id: player(),
                 nickname: "late".into(),
-                sink: tx,
+                sink: tx.into(),
                 reply: reply_tx,
             })
             .await
@@ -468,7 +463,7 @@ mod tests {
             .send(RoomCommand::Join {
                 player_id: p,
                 nickname: "n".into(),
-                sink: tx,
+                sink: tx.into(),
                 reply: reply_tx,
             })
             .await

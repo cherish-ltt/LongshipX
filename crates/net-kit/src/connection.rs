@@ -42,13 +42,25 @@ where
 {
     let (read_half, write_half) = tokio::io::split(io);
     let (tx, rx) = mpsc::channel(config.send_queue_capacity);
-    let writer = tokio::spawn(write_task(write_half, rx, config.max_frame_size));
+    let outbound = OutboundSender::new(tx);
+    let mut disconnected = outbound.disconnect_signal();
+    let writer = tokio::spawn(async move {
+        tokio::select! {
+            biased;
+            _ = async {
+                if disconnected.wait_for(|closed| *closed).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            } => {},
+            _ = write_task(write_half, rx, config.max_frame_size) => {},
+        }
+    });
     (
         FrameReader {
             stream: read_half,
             max_frame_size: config.max_frame_size,
         },
-        OutboundSender::new(tx),
+        outbound,
         writer,
     )
 }
@@ -122,6 +134,20 @@ mod tests {
         drop(sender);
         let result = tokio::time::timeout(Duration::from_secs(1), writer).await;
         assert!(result.is_ok(), "发送端关闭后写 task 应当退出");
+    }
+
+    #[tokio::test]
+    async fn explicit_disconnect_cancels_blocked_socket_write() {
+        let (client, _server) = tokio::io::duplex(1);
+        let (_reader, sender, writer) = split_connection(client, CONFIG);
+        sender.try_send_frame(Frame::new(1, vec![0; 128])).unwrap();
+        tokio::task::yield_now().await;
+        sender.disconnect();
+        tokio::time::timeout(Duration::from_secs(1), writer)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(sender.is_closed());
     }
 
     #[tokio::test]

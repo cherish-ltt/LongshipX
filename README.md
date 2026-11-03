@@ -329,6 +329,13 @@ cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 
 * CI(GitHub Actions)执行 `fmt --check` / `clippy -D warnings` / `build` / `test`,见 `.github/workflows/rust-ci.yml`;
 * 提交前请本地跑通上述"开发与测试"命令。
 
+## 房间队列过载
+
+Actor 事件队列与 socket 出站队列都采用满即断开策略（包括聊天），不静默丢失关键回执后继续会话。
+`RoomEventSink` 持有独立且持久的失败信号；网关观察该信号并关闭写任务、清理连接。
+应用层调用者应保留 sink 并观察 `failed()`，原 `mpsc::Sender<RoomEvent>` 可通过 `into()` 适配。
+`OutboundSender` 一旦溢出即永久不可写，即使旧帧随后被消费也不会恢复。
+
 ## License
 
 MIT OR Apache-2.0(见 `LICENSE-MIT` / `LICENSE-APACHE`)。

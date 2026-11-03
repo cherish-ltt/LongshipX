@@ -1,14 +1,15 @@
 //! RoomService:跨房间门面。负责房间的创建/查找/命令投递与领域事件发布;
 //! 房间内部状态由各自 Actor 串行持有(无全局锁,PRD 9.2 🔴)。
 
+use super::RoomEventSink;
 use crate::error::AppError;
 use crate::ports::EventPublisher;
-use crate::room::actor::{MAX_CHAT_CHARS, RoomActor, RoomCommand, RoomEvent, RoomHandle};
+use crate::room::actor::{MAX_CHAT_CHARS, RoomActor, RoomCommand, RoomHandle};
 use chrono::Utc;
 use longshipx_domain::{DomainEvent, PlayerId, Room, RoomId};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, oneshot};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoomServiceConfig {
@@ -39,8 +40,9 @@ impl RoomService {
         room_id: Option<RoomId>,
         player_id: PlayerId,
         nickname: String,
-        sink: mpsc::Sender<RoomEvent>,
+        sink: impl Into<RoomEventSink>,
     ) -> Result<RoomId, AppError> {
+        let sink = sink.into();
         match room_id {
             Some(id) => {
                 self.join(id, player_id, nickname, sink).await?;
@@ -54,7 +56,7 @@ impl RoomService {
         &self,
         player_id: PlayerId,
         nickname: String,
-        sink: mpsc::Sender<RoomEvent>,
+        sink: RoomEventSink,
     ) -> Result<RoomId, AppError> {
         let room = Room::open(self.config.max_players, Utc::now());
         let handle = RoomActor::spawn(room, self.config.command_capacity);
@@ -72,7 +74,7 @@ impl RoomService {
         room_id: RoomId,
         player_id: PlayerId,
         nickname: String,
-        sink: mpsc::Sender<RoomEvent>,
+        sink: RoomEventSink,
     ) -> Result<(), AppError> {
         let handle = self
             .handle_for(room_id)
@@ -210,7 +212,9 @@ impl RoomService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RoomEvent;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::mpsc;
 
     struct CountingPublisher(AtomicUsize);
 
