@@ -34,10 +34,10 @@ SERVER_ACCEPT_CONCURRENCY=256
 SERVER_TCP_READ_BUFFER_SIZE=16384
 SERVER_TCP_WRITE_BUFFER_SIZE=16384
 
-# 每个连接发送队列容量(有界,防止内存溢出,PRD 8.5)
-# EOF 后写队列最多排空时间(毫秒)
+# 发送端全部关闭后写队列最多排空时间(毫秒);0 表示不等待
 SERVER_WRITE_DRAIN_TIMEOUT_MS=1000
 
+# 每个连接发送队列容量(有界,防止内存溢出,PRD 8.5)
 SERVER_CHANNEL_PER_CONN_SIZE=256
 
 # 每个 Room 命令队列容量
@@ -52,7 +52,7 @@ SERVER_HEARTBEAT_INTERVAL_SECS=20
 # 心跳超时(秒,必须 ≥ 2 倍间隔)
 SERVER_HEARTBEAT_TIMEOUT_SECS=60
 
-# 未鉴权连接超时(秒)
+# TCP 准入至 Bind 完成的固定期限(秒),包含 TLS 握手;无效 Bind 不续期
 SERVER_UNAUTH_TIMEOUT_SECS=10
 
 # 同 IP 未鉴权连接数上限
@@ -152,5 +152,5 @@ APP_PASSWORD_MAX_CONCURRENCY=2
 # 单房间最大玩家数(单主城地图作为一个 room 时可调到数千)
 APP_MAX_PLAYERS_PER_ROOM=64
 
-# 优雅停机等待超时(秒)
+# 连接处理器协作退出期限(秒);超时强制取消,不保证未提交业务完成
 APP_SHUTDOWN_TIMEOUT_SECS=30

@@ -8,6 +8,8 @@
 
 基于 **tokio + TCP/TLS 1.3** 的 Rust 长连接游戏服务器后端,采用 **DDD + 洋葱架构** 组织为 Cargo workspace 多 crate 单体(PRD:`prd.md`)。
 
+当前版本: **v0.3.0**。修复清单、接口迁移与配置变化见 [v0.3.0 版本说明](docs/versions/v0.3.0.md)。
+
 ## 项目简介
 
 面向中频实时玩法(回合制 / MMORPG / 卡牌 / 社交对战)的长连接服务端:
@@ -87,7 +89,7 @@ pub fn register(username: Username, password_hash: PasswordHash, now: DateTime<U
 
 **第 2 步 — 声明仓储接口:`crates/domain/src/account/repository.rs`**
 
-用例需要"按用户名查重"和"保存",在领域层声明接口,不关心是谁实现:
+用例通过账号仓储按用户名查重;账号与玩家的写入由下一步的注册端口原子完成,不分别调用两个仓储保存:
 
 ```rust
 #[async_trait::async_trait]
@@ -102,11 +104,19 @@ pub trait AccountRepository: Send + Sync {
 密码哈希是"外部能力",应用层只定义端口,argon2 实现由基础设施注入(将来换 bcrypt/云端 KDF,业务零改动——这就是名字里的"X"):
 
 ```rust
+#[async_trait::async_trait]
 pub trait PasswordHasher: Send + Sync {
-    fn hash(&self, password: &str) -> Result<String, AppError>;
-    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError>;
+    async fn hash(&self, password: &str) -> Result<String, AppError>;
+    async fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError>;
+}
+
+#[async_trait::async_trait]
+pub trait RegistrationStore: Send + Sync {
+    async fn register(&self, account: &Account, player: &Player) -> Result<(), AppError>;
 }
 ```
+
+`RegistrationStore` 在一个事务中创建两个聚合,唯一约束负责并发查重。密码计算由基础设施卸载到有界阻塞任务,调用方必须 `.await`。
 
 **第 4 步 — 定义入参出参:`crates/application/src/dto.rs`**
 
@@ -117,24 +127,34 @@ pub struct RegisterResult { pub account_id: AccountId, pub player_id: PlayerId, 
 
 **第 5 步 — 编排用例:`crates/application/src/auth/register.rs`**
 
-Command/Query 风格的用例结构体,依赖全部是 trait 对象(`Arc<dyn Trait>`),顺序:校验 → 查重 → 哈希 → 建聚合 → 落库 → 审计:
+Command/Query 风格的用例结构体,依赖全部是 trait 对象(`Arc<dyn Trait>`),顺序:校验 → 查重 → 异步哈希 → 建聚合 → 原子落库 → 审计。核心流程节选如下,完整错误与审计处理见源文件:
 
 ```rust
-pub struct RegisterUseCase { accounts: Arc<dyn AccountRepository>, players: Arc<dyn PlayerRepository>,
-                             hasher: Arc<dyn PasswordHasher>, audit: Arc<dyn AuditLogger> }
+pub struct RegisterUseCase {
+    accounts: Arc<dyn AccountRepository>,
+    registration: Arc<dyn RegistrationStore>,
+    hasher: Arc<dyn PasswordHasher>,
+    audit: Arc<dyn AuditLogger>,
+}
 
 impl RegisterUseCase {
     pub async fn execute(&self, cmd: RegisterCommand) -> Result<RegisterResult, AppError> {
-        let username = Username::try_new(&cmd.username)?;           // 1. 领域校验
+        let username = Username::try_new(&cmd.username)?;
+        let nickname = Nickname::try_new(&cmd.nickname)?;
+        let password = PlainPassword::try_new(&cmd.password)?;
         if self.accounts.find_by_username(username.as_str()).await?.is_some() {
-            return Err(AppError::Conflict("用户名已被占用".into()));  // 2. 查重
+            return Err(AppError::Conflict("用户名已被占用".into()));
         }
-        let hash = PasswordHash::new(self.hasher.hash(&cmd.password)?); // 3. 哈希
-        let account = Account::register(username, hash, Utc::now());    // 4. 聚合
+        let hash = PasswordHash::new(self.hasher.hash(password.expose()).await?);
+        let account = Account::register(username, hash, Utc::now());
         let player = Player::create(account.id(), nickname, Utc::now());
-        self.accounts.save(&account).await?;                            // 5. 落库
-        self.players.save(&player).await?;
-        Ok(RegisterResult { /* ... */ })                                // 6. 回执
+        self.registration.register(&account, &player).await?;
+        self.audit_success(&player, account.username()).await;
+        Ok(RegisterResult {
+            account_id: account.id(),
+            player_id: player.id(),
+            nickname: player.nickname().as_str().to_string(),
+        })
     }
 }
 ```
@@ -158,12 +178,15 @@ async fn register(State(state): State<Arc<HttpState>>, Json(req): Json<RegisterR
 洋葱架构在组装根闭合:把 infrastructure 的实现塞进用例。`build_services` 中:
 
 ```rust
-let hasher = Arc::new(Argon2PasswordHasher::new(memory_kb, iterations, parallelism)?);
-let register = Arc::new(RegisterUseCase::new(accounts, players, hasher.clone(), audit));
+let registration = Arc::new(SeaRegistrationStore::new(db.clone()));
+let hasher = Arc::new(Argon2PasswordHasher::new(
+    memory_kb, iterations, parallelism, config.app.password_max_concurrency,
+)?);
+let register = Arc::new(RegisterUseCase::new(accounts, registration, hasher.clone(), audit));
 // HttpState { register, .. } → http::routes::router(state)
 ```
 
-**第 8 步 — 验证**:`cargo run -p longshipx-server-bin` 后 `curl -XPOST localhost:8081/register -d '{...}'`;并补路由层测试(参考 `crates/gateway/tests/http.rs` 的 tower oneshot 写法)。
+**第 8 步 — 验证**:启动服务后使用已信任开发 CA 的 `curl -XPOST https://localhost:8081/register -H 'Content-Type: application/json' -d '{...}'`(替换为合法注册 JSON);并补路由层测试(参考 `crates/gateway/tests/http.rs` 的 tower oneshot 写法)。
 
 ### 任务 B:开发"获取角色信息"TCP 命令
 
@@ -319,11 +342,11 @@ cargo llvm-cov --workspace --summary-only   # 覆盖率
 
 * 单元测试全部可离线运行;SeaORM/Redis 具体实现需要真实服务,不在单测中覆盖;
 * 端到端测试使用 rcgen 自签证书走真实 TLS 握手(见 `crates/gateway/tests/e2e.rs`);
-* 当前覆盖率基线:全仓行覆盖 ≈ 88%,核心 crate(domain/application/protocol/net-kit/gateway-http)≈ 83%–100%。
+* v0.3.0 修复组合发布前实测:188 项默认测试及 4 项独立 PostgreSQL/Redis 回归通过,全仓行覆盖 89.99%(5096/5663);覆盖率报告不含真实库回归,server-bin 启动链路未覆盖。版本更新阶段不重复运行验证。
 
 ## 性能基准
 
-基于 criterion 的基准套件覆盖框架全部热路径,全部可离线运行(真实 loopback TCP/TLS + 内存版基础设施):
+基于 criterion 的基准套件覆盖框架全部热路径,全部可离线运行(真实 loopback TCP/TLS + 内存版基础设施)。下表是 v0.2.x 历史参考值,v0.3.0 未重跑性能基准:
 
 | 位置 | 内容 | 典型结果(M3 级单核) |
 | --- | --- | --- |

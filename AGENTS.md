@@ -250,9 +250,9 @@ msrv = "1.95.0"
 
 ### 10.4 测试与覆盖率
 
-- 单元测试必须可离线运行(不依赖 PG/Redis/容器);SeaORM/Redis 具体实现仅编译验证,真实库集成测试另行规划。
+- 默认测试必须可离线运行(不依赖 PG/Redis/容器);真实 PostgreSQL/Redis 回归位于 `crates/infrastructure/tests/`,默认忽略,仅在显式提供独立测试库时执行,禁止指向业务库。
 - 端到端测试(`crates/gateway/tests/e2e.rs`、`tests/http.rs`)使用 rcgen 自签证书走真实 TLS,是协议/鉴权/房间链路的验收基线,改协议或网关后必须先跑。
-- 覆盖率命令:`cargo llvm-cov --workspace --summary-only`;当前基线:全仓行覆盖 ≈ 88%,核心 crate(domain/application/protocol/net-kit/gateway-http)≈ 83%–100%,SeaORM 仓储与 server-bin 启动序列为 0%(需真实服务)。不得使核心 crate 覆盖率显著回落。
+- 覆盖率命令:`cargo llvm-cov --workspace --summary-only`;v0.3.0 修复组合基线:全仓行覆盖 89.99%(5096/5663),真实 PostgreSQL/Redis 回归另行执行、不计入该覆盖率,server-bin 启动序列未覆盖。不得使核心 crate 覆盖率显著回落。
 - 覆盖率工具链:`cargo-llvm-cov` + `rustup component add llvm-tools-preview`。
 
 ### 10.5 网络层约定(net-kit)
@@ -297,6 +297,7 @@ msrv = "1.95.0"
 - 版本号遵循语义化版本(SemVer)。升级版本时必须同步:根 `Cargo.toml` 的 `[workspace.package]` 与 `[workspace.dependencies]` 内部依赖约束(`=`)、全部成员 crate 的内联 `version`,并执行 `cargo update -w` 同步 `Cargo.lock`。
 - 变更记录位于 `docs/versions/`,**每个发布版本一个独立 Markdown 文件**,命名为 `vX.Y.Z.md`(如 `v0.1.0.md`、`v0.2.0.md`);不再维护单一 CHANGELOG 文件。
 - 版本文件按 Keep a Changelog 风格以 `Changed` / `Added` / `Fixed` / `Removed` 等小节记录用户可感知的变更;**发布新版本时新建对应文件**,与版本号改动在同一发布批次提交。
+- 公共端口或配置结构有不兼容变化时,版本文件须列出迁移项,并同步 README 示例、PRD 配置表与 `.public_env`;不将历史测试或性能数字描述为新版本重测结果。
 - 发布流程:新增 `docs/versions/vX.Y.Z.md` + 版本号同步(`chore: 版本更新至 X.Y.Z`)→ 打注解 tag `vX.Y.Z` → push 分支与 tag。
 
 

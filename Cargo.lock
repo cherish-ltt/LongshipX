@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-application"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2013,7 +2013,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-domain"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-gateway"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2056,7 +2056,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-infrastructure"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-migration"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "sea-orm-migration",
@@ -2084,7 +2084,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-net-kit"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-protocol"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "longshipx-net-kit",
@@ -2112,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "longshipx-server-bin"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "axum",
  "dotenvy",

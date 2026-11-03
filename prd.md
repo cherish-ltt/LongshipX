@@ -323,6 +323,8 @@ impl<A: AccountRepository, S: SessionTokenStore> LoginUseCase<A, S> {
 
 跨多个聚合的写操作需要事务一致性时，在 application 层定义 `UnitOfWork` trait（由 infrastructure 用 SeaORM 的 `DatabaseTransaction` 实现），禁止在 application 里直接感知"这是一个数据库事务"，只感知"这是一个原子操作单元"。
 
+v0.3.0 的注册通过专用 `RegistrationStore` 端口原子创建账号与玩家,不拆成两次保存;玩家经验通过仓储原子更新,登录仅更新登录时间。升级事件在提交后发布,发布失败返回 `AppError::PostCommit`,不得重试整个奖励操作;当前未实现 outbox。
+
 ---
 
 ## 7. 基础设施层：PostgreSQL 18 + SeaORM + Redis
@@ -441,13 +443,15 @@ pub trait Transport: Send + Sync {
 
 🔴 **未鉴权连接必须有严格超时**（建议 5-10 秒内未完成鉴权则强制断开）与**限流**（同一 IP 并发未鉴权连接数上限），否则这是一个天然的资源耗尽攻击入口（构造大量连接、不发送数据、白占服务器连接数与内存）。
 
+v0.3.0 在 TLS 握手前计入全局连接及单 IP 未鉴权配额,从准入到 Bind 完成共用固定期限,无效 Bind 不续期。登录原子替换同玩家旧令牌,存储失败不报告成功;已绑定连接在业务分发和房间广播前重新校验原令牌,失效、存储错误或超时均断开。Redis 实现使用单实例 Lua 脚本,不支持跨槽 Cluster。
+
 ### 8.4 心跳与超时
 
 客户端每 N 秒（建议 15-30s）发送心跳，服务端更新 `Session.last_heartbeat_at`；后台巡检任务定期扫描超时会话（建议超时阈值 45-60s，即 2-3 个心跳周期未收到）并强制断开、回收资源。⚠️ **仅靠 TCP 自身的 keepalive 不够**——操作系统默认 keepalive 探测间隔通常是几小时级别，远达不到游戏对"及时发现掉线玩家"的要求，应用层心跳是必须的。
 
 ### 8.5 背压与慢客户端处理 🔴
 
-每个连接的发送队列（写 task 消费的 `mpsc::channel`）**必须是有界的**，并明确队列满后的处理策略（丢弃非关键消息 / 直接断开该连接，二选一，具体取决于业务对"消息必达"的要求）。
+每个连接的发送队列（写 task 消费的 `mpsc::channel`）**必须是有界的**。v0.3.0 的 Actor 事件队列与 socket 出站队列统一采用满即断开策略(包括聊天),失败信号独立于数据队列且不可复位,禁止静默丢弃关键回执后继续会话。
 
 ⚠️ **原因**：无界发送队列在客户端异常（网络拥塞、客户端卡死、恶意构造的慢速消费者）时会无限增长，最终耗尽服务器内存——这本质上是应用层的 Slowloris 变种攻击，即便没有恶意攻击者，普通玩家的弱网环境也可能触发同样的问题。
 
@@ -550,6 +554,8 @@ pub trait Transport: Send + Sync {
 4. 落盘所有待持久化的状态变更；
 5. 关闭数据库连接池、Redis 连接；
 6. 进程退出。
+
+v0.3.0 的处理器协作退出期限由 `APP_SHUTDOWN_TIMEOUT_SECS` 控制,期限后强制取消并由 RAII 清理连接资源;写队列排空另受 `SERVER_WRITE_DRAIN_TIMEOUT_MS` 限制。以上是有界退出机制,不保证未提交业务、尚未送达通知或卡住的自定义事件发布器完成。
 
 ### 13.3 部署形态
 
@@ -715,16 +721,18 @@ testcontainers = "0.23"
 | `SERVER_TCP_BIND_ADDR`           | `String` | `"0.0.0.0:8080"` | TCP+TLS 监听地址（IP:端口）                                  |
 | `SERVER_HTTP_BIND_ADDR`          | `String` | `"0.0.0.0:8081"` | HTTP (axum) 监听地址，用于登录/注册等                        |
 | `SERVER_WSS_BIND_ADDR`           | `String` | `"0.0.0.0:8082"` | WSS 监听地址（仅当启用 WSS 时有效）                          |
-| `SERVER_MAX_CONNECTIONS`         | `usize`  | `10000`          | 最大同时在线连接数（超出后拒绝新连接）                       |
+| `SERVER_MAX_CONNECTIONS`         | `usize`  | `10000`          | 最大连接数,从 TLS 前准入开始计数（超出后拒绝新连接）       |
 | `SERVER_CONNECTION_BACKLOG`      | `u32`    | `1024`           | TCP 监听队列的 backlog 大小（`listen` 参数）                 |
+| `SERVER_ACCEPT_CONCURRENCY`      | `usize`  | `256`            | 并行 TLS 握手上限,满时拒绝额外接入                         |
 | `SERVER_TCP_READ_BUFFER_SIZE`    | `usize`  | `16384`          | 每个连接的读缓冲区初始大小（字节）                           |
 | `SERVER_TCP_WRITE_BUFFER_SIZE`   | `usize`  | `16384`          | 每个连接的写缓冲区初始大小                                   |
+| `SERVER_WRITE_DRAIN_TIMEOUT_MS`  | `u64`    | `1000`           | 发送端全部关闭后写队列排空期限(毫秒),0 表示不等待            |
 | `SERVER_CHANNEL_PER_CONN_SIZE`   | `usize`  | `256`            | 每个连接发送队列（`mpsc::channel`）的容量，**必须有界**（PRD 8.5） |
-| `SERVER_CHANNEL_PER_ROOM_SIZE`   | `usize`  | `512`            | 每个 Room 命令队列的容量                                     |
+| `SERVER_CHANNEL_PER_ROOM_SIZE`   | `usize`  | `512`            | 每个 Room 命令队列的容量,必须大于 0                         |
 | `SERVER_MAX_FRAME_SIZE`          | `usize`  | `65536`          | 单条消息长度上限（64KB），防止恶意大包（PRD 8.2 强制）       |
 | `SERVER_HEARTBEAT_INTERVAL_SECS` | `u64`    | `20`             | 客户端心跳间隔（秒）                                         |
 | `SERVER_HEARTBEAT_TIMEOUT_SECS`  | `u64`    | `60`             | 服务端判定超时断连的阈值（建议 2~3 个心跳周期）              |
-| `SERVER_UNAUTH_TIMEOUT_SECS`     | `u64`    | `10`             | 未鉴权连接最大存活时间（秒），超时强制断开                   |
+| `SERVER_UNAUTH_TIMEOUT_SECS`     | `u64`    | `10`             | TCP 准入至 Bind 完成的固定期限(秒),含 TLS,无效 Bind 不续期 |
 | `SERVER_UNAUTH_MAX_PER_IP`       | `usize`  | `5`              | 同一 IP 允许的最大未鉴权连接数，防资源耗尽                   |
 | `SERVER_TCP_NODELAY`             | `bool`   | `true`           | 是否开启 `TCP_NODELAY`（禁用 Nagle，降低延迟）               |
 | `SERVER_TCP_KEEPALIVE_SECS`      | `u64`    | `30`             | 操作系统 TCP keepalive 空闲探测间隔（秒），仅作底层辅助      |
@@ -783,8 +791,9 @@ testcontainers = "0.23"
 | `APP_PASSWORD_ITERATIONS`    | `u32` | `3`      | argon2id 迭代次数（根据性能调优）             |
 | `APP_PASSWORD_MEMORY_KB`     | `u32` | `19456`  | argon2id 内存开销（KB）                       |
 | `APP_PASSWORD_PARALLELISM`   | `u32` | `4`      | argon2id 并行度                               |
+| `APP_PASSWORD_MAX_CONCURRENCY` | `usize` | `2` | 共享哈希器的阻塞计算并发上限,超限返回 503、不排队 |
 | `APP_MAX_PLAYERS_PER_ROOM`   | `u32` | `64`     | 单房间最大玩家数（按实际玩法可覆盖）          |
-| `APP_SHUTDOWN_TIMEOUT_SECS`  | `u64` | `30`     | 优雅停机时等待现有事务完成的超时秒数          |
+| `APP_SHUTDOWN_TIMEOUT_SECS`  | `u64` | `30`     | 连接处理器协作退出期限(秒),超时强制取消      |
 
 ---
 
@@ -814,9 +823,15 @@ SERVER_MAX_CONNECTIONS=10000
 # TCP listen backlog
 SERVER_CONNECTION_BACKLOG=1024
 
+# 并行 TLS 握手上限,满时拒绝额外接入
+SERVER_ACCEPT_CONCURRENCY=256
+
 # 读/写缓冲区初始大小（字节）
 SERVER_TCP_READ_BUFFER_SIZE=16384
 SERVER_TCP_WRITE_BUFFER_SIZE=16384
+
+# 发送端全部关闭后写队列排空期限(毫秒),0 表示不等待
+SERVER_WRITE_DRAIN_TIMEOUT_MS=1000
 
 # 每个连接发送队列容量（有界，防止内存溢出）
 SERVER_CHANNEL_PER_CONN_SIZE=256
@@ -833,7 +848,7 @@ SERVER_HEARTBEAT_INTERVAL_SECS=20
 # 心跳超时（秒，建议 2~3 倍间隔）
 SERVER_HEARTBEAT_TIMEOUT_SECS=60
 
-# 未鉴权连接超时（秒）
+# TCP 准入至 Bind 完成的固定期限(秒),含 TLS,无效 Bind 不续期
 SERVER_UNAUTH_TIMEOUT_SECS=10
 
 # 同 IP 未鉴权连接数上限
@@ -923,10 +938,13 @@ APP_PASSWORD_MEMORY_KB=19456
 # argon2id 并行度
 APP_PASSWORD_PARALLELISM=4
 
+# 共享哈希器的阻塞计算并发上限,超限返回 503、不排队
+APP_PASSWORD_MAX_CONCURRENCY=2
+
 # 单房间最大玩家数
 APP_MAX_PLAYERS_PER_ROOM=64
 
-# 优雅停机等待超时（秒）
+# 连接处理器协作退出期限(秒),超时强制取消
 APP_SHUTDOWN_TIMEOUT_SECS=30
 ```
 
