@@ -55,8 +55,6 @@ pub async fn handle_bind(
         },
         token.to_string(),
     );
-    // 鉴权完成,退出未鉴权名额计数。
-    ctx.deps.auth_gate.release(ctx.peer_ip);
     metrics::counter!("longshipx_bind_total").increment(1);
     tracing::info!(conn = %ctx.conn_id, player = %player_id, "连接绑定成功");
     Ok(Some(bind_ok(&player_id.0.to_string(), &nickname)))
@@ -94,6 +92,13 @@ pub async fn handle_join_room(
         Ok(room_id) => room_id,
         Err(message_text) => return Ok(Some(error_notification(ERR_INVALID_INPUT, &message_text))),
     };
+    if let Some(current) = ctx.current_room() {
+        return if target == Some(current) {
+            Ok(None)
+        } else {
+            Ok(Some(error_notification(ERR_CONFLICT, "请先离开当前房间")))
+        };
+    }
     match ctx
         .deps
         .rooms
