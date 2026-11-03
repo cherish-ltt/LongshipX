@@ -89,9 +89,10 @@ async fn https_endpoint_serves_real_tls_with_hsts() {
 #[tokio::test]
 async fn plaintext_listener_only_redirects_to_https() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let addr = longshipx_gateway::http::serve_redirect("127.0.0.1:0".parse().unwrap(), shutdown_rx)
-        .await
-        .unwrap();
+    let addr =
+        longshipx_gateway::http::serve_redirect("127.0.0.1:0".parse().unwrap(), 443, shutdown_rx)
+            .await
+            .unwrap();
 
     let mut conn = TcpStream::connect(addr).await.unwrap();
     conn.write_all(
@@ -112,6 +113,80 @@ async fn plaintext_listener_only_redirects_to_https() {
             .contains("location: https://game.example.com/login?next=/me")
     );
 
+    shutdown_tx.send_replace(true);
+}
+
+#[tokio::test]
+async fn redirect_targets_the_actual_https_listener() {
+    let (cert, key) = test_certs();
+    let tls = longshipx_net_kit::tls::server_config_from_pem_bytes(cert, key).unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let https = longshipx_gateway::http::serve_https(
+        "127.0.0.1:0".parse().unwrap(),
+        tls,
+        app(),
+        shutdown_rx.clone(),
+    )
+    .await
+    .unwrap();
+    let redirect = longshipx_gateway::http::serve_redirect(
+        "127.0.0.1:0".parse().unwrap(),
+        https.port(),
+        shutdown_rx,
+    )
+    .await
+    .unwrap();
+    let mut conn = TcpStream::connect(redirect).await.unwrap();
+    conn.write_all(
+        format!("GET /healthz?probe=1 HTTP/1.1\r\nHost: {redirect}\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        conn.read_to_string(&mut response),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let expected = format!("location: https://{https}/healthz?probe=1");
+    assert!(
+        response.contains(&expected),
+        "expected {expected}, got {response}"
+    );
+    let location = response
+        .lines()
+        .find_map(|line| line.strip_prefix("location: "))
+        .unwrap();
+    let uri: axum::http::Uri = location.parse().unwrap();
+    let tcp = TcpStream::connect(uri.authority().unwrap().as_str())
+        .await
+        .unwrap();
+    let connector = tokio_rustls::TlsConnector::from(tls_client_config());
+    let name = rustls::pki_types::ServerName::try_from("localhost".to_string()).unwrap();
+    let mut stream = connector.connect(name, tcp).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                uri.path_and_query().unwrap()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut followed = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        stream.read_to_string(&mut followed),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(followed.starts_with("HTTP/1.1 200"));
+    assert!(followed.ends_with("ok"));
     shutdown_tx.send_replace(true);
 }
 

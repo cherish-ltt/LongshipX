@@ -238,7 +238,8 @@ async fn start_http_server(
             let addr: SocketAddr = redirect_addr
                 .parse()
                 .map_err(|err| format!("SERVER_HTTP_REDIRECT_ADDR 非法: {err}"))?;
-            let bound = longshipx_gateway::http::serve_redirect(addr, shutdown_rx).await?;
+            let bound =
+                longshipx_gateway::http::serve_redirect(addr, bound.port(), shutdown_rx).await?;
             tracing::info!(%bound, "HTTP→HTTPS 自动跳转已启用");
         },
         None => tracing::info!("未配置 SERVER_HTTP_REDIRECT_ADDR,进程内无任何明文 HTTP 监听"),

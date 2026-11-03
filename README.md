@@ -286,6 +286,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+HTTP 308 跳转保留请求主机、路径和查询,将明文端口替换为实际 HTTPS 监听端口(443 省略);非法或缺失 Host 返回 400。`redirect_router` / `serve_redirect` 调用方须传入 HTTPS 端口。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint
