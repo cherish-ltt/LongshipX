@@ -58,7 +58,7 @@ mkcert -cert-file ~/certs/localhost.pem -key-file ~/certs/localhost-key.pem loca
 cargo run -p longshipx-server-bin
 ```
 
-> 配置路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`)。
+> TLS 证书和私钥路径支持 `~/` 前缀展开(如 `TLS_CERT_PATH=~/certs/localhost.pem`),要求非空 `HOME`;绝对路径与普通相对路径保持原义,不执行 shell 展开。
 
 框架自带两个"已完成实现"作参照:HTTP 注册/登录(见 `crates/gateway/src/http/routes.rs`)与 TCP 获取档案命令(见 `crates/gateway/src/tcp/handlers.rs` 的 `handle_get_profile`);可运行客户端示例:`cargo run -p longshipx-server-bin --example quickstart_client -- --token <token> --root-ca "$(mkcert -CAROOT)/rootCA.pem"`。
 
