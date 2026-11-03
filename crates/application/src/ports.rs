@@ -18,7 +18,8 @@ pub trait RegistrationStore: Send + Sync {
 /// 会话令牌存储:不透明随机 token + 服务端存储,支持立即吊销(PRD 6.1/10)。
 #[async_trait]
 pub trait SessionTokenStore: Send + Sync {
-    /// 生成并保存一个新 token,`ttl` 后自动过期。
+    /// 原子替换该玩家全部旧 token,新 token 在 `ttl` 后自动过期。
+    /// 取消或网络超时可能发生在提交之后,重试会再次替换,不会留下多个有效 token。
     async fn create(&self, player_id: PlayerId, ttl: Duration) -> Result<String, AppError>;
 
     /// 由 token 反查玩家;过期/不存在返回 None(不区分,避免信息泄露)。

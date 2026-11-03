@@ -41,23 +41,32 @@ impl RedisTokenStore {
 impl SessionTokenStore for RedisTokenStore {
     async fn create(&self, player_id: PlayerId, ttl: Duration) -> Result<String, AppError> {
         let token = random_token();
-        let ttl_secs = ttl.as_secs().max(1);
+        let ttl_ms = u64::try_from(ttl.as_millis())
+            .ok()
+            .filter(|ttl| *ttl <= i64::MAX as u64 / 2)
+            .ok_or_else(|| AppError::Validation("token TTL 过大".into()))?
+            .max(1);
         let mut conn = self.connection.clone();
-        let token_key = Self::token_key(&token);
-        let index_key = Self::player_index_key(player_id);
-        let _: () = conn
-            .set_ex(&token_key, player_id.0.to_string(), ttl_secs)
-            .await
-            .map_err(map_redis)?;
-        let _: () = conn
-            .sadd::<_, _, ()>(&index_key, &token)
-            .await
-            .map_err(map_redis)?;
-        // 反向索引与 token 同寿命,过期后自动清理。
-        let _: () = conn
-            .expire::<_, ()>(&index_key, ttl_secs as i64)
-            .await
-            .map_err(map_redis)?;
+        let _: () = redis::Script::new(
+            r"
+            local old = redis.call('SMEMBERS', KEYS[1])
+            for _, token in ipairs(old) do
+                redis.call('DEL', 'token:' .. token)
+            end
+            redis.call('DEL', KEYS[1])
+            redis.call('SADD', KEYS[1], ARGV[3])
+            redis.call('PEXPIRE', KEYS[1], ARGV[2])
+            redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[2])
+            ",
+        )
+        .key(Self::player_index_key(player_id))
+        .key(Self::token_key(&token))
+        .arg(player_id.0.to_string())
+        .arg(ttl_ms)
+        .arg(&token)
+        .invoke_async(&mut conn)
+        .await
+        .map_err(map_redis)?;
         Ok(token)
     }
 
@@ -74,15 +83,19 @@ impl SessionTokenStore for RedisTokenStore {
 
     async fn revoke_player(&self, player_id: PlayerId) -> Result<(), AppError> {
         let mut conn = self.connection.clone();
-        let index_key = Self::player_index_key(player_id);
-        let tokens: Vec<String> = conn.smembers(&index_key).await.map_err(map_redis)?;
-        for token in tokens {
-            let _: () = conn
-                .del::<_, ()>(Self::token_key(&token))
-                .await
-                .map_err(map_redis)?;
-        }
-        let _: () = conn.del::<_, ()>(&index_key).await.map_err(map_redis)?;
+        let _: () = redis::Script::new(
+            r"
+            local tokens = redis.call('SMEMBERS', KEYS[1])
+            for _, token in ipairs(tokens) do
+                redis.call('DEL', 'token:' .. token)
+            end
+            redis.call('DEL', KEYS[1])
+            ",
+        )
+        .key(Self::player_index_key(player_id))
+        .invoke_async(&mut conn)
+        .await
+        .map_err(map_redis)?;
         Ok(())
     }
 }

@@ -54,7 +54,15 @@ fn random_token() -> String {
 impl SessionTokenStore for InMemoryTokenStore {
     async fn create(&self, player_id: PlayerId, ttl: Duration) -> Result<String, AppError> {
         let token = random_token();
+        let expires_at = Instant::now()
+            .checked_add(ttl)
+            .ok_or_else(|| AppError::Validation("token TTL 过大".into()))?;
         let mut state = self.state.lock().expect("token store 锁中毒");
+        if let Some(tokens) = state.by_player.remove(&player_id) {
+            for old in tokens {
+                state.by_token.remove(&old);
+            }
+        }
         state
             .by_player
             .entry(player_id)
@@ -64,7 +72,7 @@ impl SessionTokenStore for InMemoryTokenStore {
             token.clone(),
             Entry {
                 player_id,
-                expires_at: Instant::now() + ttl,
+                expires_at,
             },
         );
         Ok(token)
