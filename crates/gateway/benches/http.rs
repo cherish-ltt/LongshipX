@@ -24,7 +24,7 @@ use longshipx_gateway::http::state::HttpState;
 use longshipx_infrastructure::cache::InMemoryTokenStore;
 use longshipx_infrastructure::password::Argon2PasswordHasher;
 use longshipx_infrastructure::persistence::repositories::{
-    InMemoryAccountRepository, InMemoryPlayerRepository,
+    InMemoryAccountRepository, InMemoryPlayerRepository, InMemoryRegistrationStore,
 };
 use tokio::runtime::{Builder, Runtime};
 use tower::ServiceExt as _;
@@ -75,7 +75,10 @@ fn build_app(
     let tokens: Arc<dyn SessionTokenStore> = store.clone();
     let register = Arc::new(RegisterUseCase::new(
         accounts.clone(),
-        players.clone(),
+        Arc::new(InMemoryRegistrationStore::new(
+            accounts.clone(),
+            players.clone(),
+        )),
         hasher.clone(),
         audit.clone(),
     ));
