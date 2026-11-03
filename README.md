@@ -286,6 +286,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+TCP 绑定后每次入站业务请求及房间广播都会重新校验原会话 token;撤销、过期、存储错误或校验超过心跳超时均关闭连接,不再永久信任缓存身份。校验前已接收的请求/已入发送队列的数据不会撤回;无流量连接最迟在心跳超时清理。令牌仅私有保存,不输出到 Debug。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint

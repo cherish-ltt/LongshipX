@@ -45,12 +45,6 @@ pub async fn handle_connection(
 
     // 房间事件翻译 task:RoomEvent → 协议帧 → 发送队列。
     let (room_tx, room_rx) = mpsc::channel::<RoomEvent>(config.room_event_capacity);
-    let translator = tokio::spawn(room_event_translator(
-        room_rx,
-        outbound.clone(),
-        deps.codec.clone(),
-    ));
-
     let ctx = ConnContext {
         conn_id,
         peer_ip: peer.ip(),
@@ -59,9 +53,17 @@ pub async fn handle_connection(
         auth: Arc::new(parking_lot::Mutex::new(Default::default())),
         deps: deps.clone(),
     };
+    let mut translator = tokio::spawn(room_event_translator(
+        room_rx,
+        ctx.clone(),
+        config.heartbeat_timeout,
+    ));
     let mut session = Session::new(chrono::Utc::now());
 
-    run_read_loop(&ctx, &mut reader, &mut session, &config).await;
+    tokio::select! {
+        _ = run_read_loop(&ctx, &mut reader, &mut session, &config) => {},
+        _ = &mut translator => {},
+    }
 
     // ── 清理:离房 → 释放限流名额 → 摘除注册表 → 关闭发送队列 ──
     if let Some(player) = ctx.authed_player() {
@@ -105,7 +107,7 @@ async fn run_read_loop(
             frame = reader.read_frame() => match frame {
                 Ok(Some(frame)) => {
                     session.touch_heartbeat(chrono::Utc::now());
-                    if !admit_frame(ctx, bucket.as_mut(), frame).await {
+                    if !admit_frame(ctx, bucket.as_mut(), frame, config.heartbeat_timeout).await {
                         return;
                     }
                 }
@@ -139,6 +141,7 @@ async fn admit_frame(
     ctx: &ConnContext,
     bucket: Option<&mut TokenBucket>,
     frame: longshipx_net_kit::Frame,
+    validation_timeout: std::time::Duration,
 ) -> bool {
     if let Some(bucket) = bucket
         && !bucket.try_acquire(std::time::Instant::now())
@@ -157,15 +160,23 @@ async fn admit_frame(
     };
 
     // 🔴 鉴权门:第一条消息必须是 BIND;绑定后拒绝重复 BIND。
-    if !ctx.is_authenticated() {
-        if message.opcode() != OP_C2S_BIND {
-            let _ = ctx.try_send(error_notification(
-                ERR_AUTH_REQUIRED_FIRST,
-                "必须先完成绑定",
-            ));
-            return false;
-        }
-    } else if message.opcode() == OP_C2S_BIND {
+    if !ctx.is_authenticated() && message.opcode() != OP_C2S_BIND {
+        let _ = ctx.try_send(error_notification(
+            ERR_AUTH_REQUIRED_FIRST,
+            "必须先完成绑定",
+        ));
+        return false;
+    }
+
+    if ctx.is_authenticated() && !ctx.validate_session(validation_timeout).await {
+        let _ = ctx.try_send(error_notification(
+            ERR_NOT_AUTHENTICATED,
+            "会话无效或已过期",
+        ));
+        return false;
+    }
+
+    if ctx.is_authenticated() && message.opcode() == OP_C2S_BIND {
         let _ = ctx.try_send(error_notification(ERR_ALREADY_BOUND, "连接已完成绑定"));
         return true;
     }
@@ -186,22 +197,23 @@ async fn admit_frame(
 /// 房间事件翻译:Actor 广播 → 协议帧;发送队列满即断开该连接。
 async fn room_event_translator(
     mut rx: mpsc::Receiver<RoomEvent>,
-    outbound: longshipx_net_kit::OutboundSender,
-    codec: Arc<
-        dyn longshipx_net_kit::codec::Codec<
-                In = longshipx_protocol::InboundMessage,
-                Out = OutboundMessage,
-                Error = longshipx_protocol::ProtocolError,
-            >,
-    >,
+    ctx: ConnContext,
+    validation_timeout: std::time::Duration,
 ) {
     while let Some(event) = rx.recv().await {
+        if !ctx.validate_session(validation_timeout).await {
+            let _ = ctx.try_send(error_notification(
+                ERR_NOT_AUTHENTICATED,
+                "会话无效或已过期",
+            ));
+            return;
+        }
         let message = OutboundMessage::RoomEvent(room_event_to_notification(event));
-        let Ok(frame) = codec.encode(&message) else {
+        let Ok(frame) = ctx.deps.codec.encode(&message) else {
             tracing::error!("房间事件编码失败");
             continue;
         };
-        if outbound.try_send_frame(frame).is_err() {
+        if ctx.outbound.try_send_frame(frame).is_err() {
             tracing::debug!("发送队列不可用,房间事件翻译退出");
             return;
         }

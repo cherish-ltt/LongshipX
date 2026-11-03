@@ -20,9 +20,10 @@ pub struct AuthedPlayer {
     pub nickname: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AuthState {
     pub player: Option<AuthedPlayer>,
+    session_token: Option<String>,
     /// 本连接当前所在房间(一条连接同时只在一个房间,PRD Room/Scene 语义)。
     pub current_room: Option<longshipx_domain::RoomId>,
 }
@@ -66,8 +67,29 @@ impl ConnContext {
         self.auth.lock().player.clone()
     }
 
-    pub fn set_authed(&self, player: AuthedPlayer) {
-        self.auth.lock().player = Some(player);
+    pub fn set_authed(&self, player: AuthedPlayer, token: String) {
+        let mut auth = self.auth.lock();
+        auth.player = Some(player);
+        auth.session_token = Some(token);
+    }
+
+    pub async fn validate_session(&self, timeout: std::time::Duration) -> bool {
+        let (player, token) = {
+            let auth = self.auth.lock();
+            (auth.player.clone(), auth.session_token.clone())
+        };
+        let (Some(player), Some(token)) = (player, token) else {
+            return false;
+        };
+        match tokio::time::timeout(timeout, self.deps.tokens.resolve(&token)).await {
+            Ok(Ok(Some(id))) if id == player.player_id => true,
+            Ok(Ok(_)) => false,
+            Ok(Err(err)) => {
+                tracing::warn!(conn = %self.conn_id, error = %err, "会话校验失败,关闭连接");
+                false
+            },
+            Err(_) => false,
+        }
     }
 
     pub fn current_room(&self) -> Option<longshipx_domain::RoomId> {
