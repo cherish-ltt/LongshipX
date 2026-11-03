@@ -35,6 +35,8 @@ struct TestServer {
 
 fn test_config(addr: std::net::SocketAddr) -> TcpGatewayConfig {
     TcpGatewayConfig {
+        shutdown_timeout: Duration::from_secs(1),
+        write_drain_timeout: Duration::from_millis(50),
         bind_addr: addr,
         max_frame_size: 65_536,
         send_queue_capacity: 64,

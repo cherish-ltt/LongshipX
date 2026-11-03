@@ -332,6 +332,14 @@ cargo bench -p longshipx-gateway --bench footprint     # 内存足迹报告(非 
 * CI(GitHub Actions)执行 `fmt --check` / `clippy -D warnings` / `build` / `test`,见 `.github/workflows/rust-ci.yml`;
 * 提交前请本地跑通上述"开发与测试"命令。
 
+## 连接停机与排空
+
+停机先停止 accept，连接在正在执行的请求结束后发出维护通知并离房，再有限排空写队列。
+`APP_SHUTDOWN_TIMEOUT_SECS` 控制处理器的协作退出期限；超时才取消处理器，RAII 清理其子任务、注册表与鉴权配额，并补发房间清理。
+`SERVER_WRITE_DRAIN_TIMEOUT_MS` 默认 1000，限制发送端全部关闭后 socket 写任务的排空时间；0 表示不等待排空。
+`TcpGatewayConfig` 新增 `shutdown_timeout`/`write_drain_timeout`，`ConnectionConfig` 新增 `write_drain_timeout`，`AcceptLoopConfig` 新增 `shutdown_timeout`。
+强制期限不保证尚未提交的业务完成；卡住的自定义房间事件发布器会在清理超时时记录错误，不能视为可靠投递。
+
 ## License
 
 MIT OR Apache-2.0(见 `LICENSE-MIT` / `LICENSE-APACHE`)。

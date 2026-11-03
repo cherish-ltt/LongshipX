@@ -13,6 +13,8 @@ pub struct RateLimitSettings {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TcpGatewayConfig {
+    pub shutdown_timeout: Duration,
+    pub write_drain_timeout: Duration,
     pub bind_addr: std::net::SocketAddr,
     pub max_frame_size: usize,
     pub send_queue_capacity: usize,

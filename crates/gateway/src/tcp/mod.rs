@@ -7,6 +7,7 @@ pub mod context;
 pub mod convert;
 pub mod handler;
 pub mod handlers;
+mod lifecycle;
 pub mod rate_limit;
 pub mod router_setup;
 pub mod server;

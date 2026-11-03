@@ -11,11 +11,25 @@ use tokio::sync::mpsc;
 #[derive(Clone)]
 pub struct OutboundSender {
     tx: mpsc::Sender<Frame>,
+    _lifetime: Option<tokio::sync::watch::Sender<()>>,
 }
 
 impl OutboundSender {
     pub fn new(tx: mpsc::Sender<Frame>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            _lifetime: None,
+        }
+    }
+
+    pub(crate) fn with_lifetime(
+        tx: mpsc::Sender<Frame>,
+        lifetime: tokio::sync::watch::Sender<()>,
+    ) -> Self {
+        Self {
+            tx,
+            _lifetime: Some(lifetime),
+        }
     }
 
     pub fn capacity(&self) -> usize {

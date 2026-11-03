@@ -164,6 +164,8 @@ async fn start_tcp_gateway(
         .parse()
         .map_err(|err| format!("SERVER_TCP_BIND_ADDR 非法: {err}"))?;
     let tcp_config = TcpGatewayConfig {
+        shutdown_timeout: Duration::from_secs(config.app.shutdown_timeout_secs),
+        write_drain_timeout: Duration::from_millis(config.network.write_drain_timeout_ms),
         bind_addr,
         max_frame_size: config.network.max_frame_size,
         send_queue_capacity: config.network.channel_per_conn,

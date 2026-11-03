@@ -15,6 +15,7 @@ use tokio::sync::{Semaphore, watch};
 /// accept 循环的可调参数。
 #[derive(Debug, Clone, Copy)]
 pub struct AcceptLoopConfig {
+    pub shutdown_timeout: Duration,
     /// 同时在处理的连接上限(含握手未完成的连接,PRD 8.1)。
     pub max_concurrent: Option<usize>,
     /// TLS 握手(accept 管线)的并行度。1 = 旧版串行行为;生产建议 256。
@@ -24,6 +25,7 @@ pub struct AcceptLoopConfig {
 impl Default for AcceptLoopConfig {
     fn default() -> Self {
         Self {
+            shutdown_timeout: Duration::from_secs(30),
             max_concurrent: None,
             accept_concurrency: 1,
         }
@@ -49,6 +51,7 @@ pub async fn accept_loop<T, F, Fut>(
         AcceptLoopConfig {
             max_concurrent,
             accept_concurrency: 1,
+            ..Default::default()
         },
         shutdown,
         on_connection,
@@ -79,7 +82,7 @@ pub async fn accept_loop_with<T, F, Fut>(
             let mut shutdown = shutdown.clone();
             tokio::spawn(async move {
                 let mut handshakes = tokio::task::JoinSet::new();
-                loop {
+                while !*shutdown.borrow() {
                     tokio::select! {
                         _ = shutdown.changed() => {
                             tracing::info!(worker = id, "监听器收到停机信号,停止 accept");
@@ -111,7 +114,14 @@ pub async fn accept_loop_with<T, F, Fut>(
                         }
                     }
                 }
-                handshakes.abort_all();
+                let drained = tokio::time::timeout(config.shutdown_timeout, async {
+                    while handshakes.join_next().await.is_some() {}
+                })
+                .await;
+                if drained.is_err() {
+                    handshakes.abort_all();
+                    while handshakes.join_next().await.is_some() {}
+                }
             })
         })
         .collect::<Vec<_>>();
@@ -241,6 +251,7 @@ mod tests {
         let server = tokio::spawn(accept_loop_with(
             Arc::new(transport),
             AcceptLoopConfig {
+                shutdown_timeout: Duration::from_secs(1),
                 max_concurrent: Some(64),
                 accept_concurrency: 8,
             },

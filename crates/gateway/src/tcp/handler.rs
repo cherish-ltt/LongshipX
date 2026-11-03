@@ -1,5 +1,6 @@
 //! 单连接主循环:读帧 → 限流/鉴权门 → 路由分发 → 有界发送(PRD 8/9)。
 
+use super::lifecycle::ConnectionGuard;
 use crate::tcp::config::TcpGatewayConfig;
 use crate::tcp::context::{ConnContext, GatewayDeps};
 use crate::tcp::convert::room_event_to_notification;
@@ -14,7 +15,7 @@ use longshipx_protocol::messages::error_notification;
 use longshipx_protocol::opcodes::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// 连接处理入口(每连接一个 task,panic 只影响本连接,PRD 9.3)。
 pub async fn handle_connection(
@@ -23,8 +24,18 @@ pub async fn handle_connection(
     deps: Arc<GatewayDeps>,
     config: TcpGatewayConfig,
 ) {
+    let (_shutdown_tx, shutdown) = watch::channel(false);
+    handle_connection_until_shutdown(stream, peer, deps, config, shutdown).await;
+}
+
+pub(crate) async fn handle_connection_until_shutdown(
+    stream: TlsTcpStream,
+    peer: SocketAddr,
+    deps: Arc<GatewayDeps>,
+    config: TcpGatewayConfig,
+    mut shutdown: watch::Receiver<bool>,
+) {
     let conn_id = uuid::Uuid::now_v7();
-    metrics::gauge!("longshipx_connections_active").increment(1.0);
 
     // 🔴 未鉴权连接按 IP 限量(PRD 8.3):超限直接关闭,连帧都不读。
     let holding_unauth_slot = deps.auth_gate.acquire(peer.ip());
@@ -34,9 +45,11 @@ pub async fn handle_connection(
         return;
     }
 
-    let (mut reader, outbound, writer) = split_connection(
+    metrics::gauge!("longshipx_connections_active").increment(1.0);
+    let (mut reader, outbound, mut writer) = split_connection(
         stream,
         ConnectionConfig {
+            write_drain_timeout: config.write_drain_timeout,
             max_frame_size: config.max_frame_size,
             send_queue_capacity: config.send_queue_capacity,
         },
@@ -61,27 +74,30 @@ pub async fn handle_connection(
     };
     let mut session = Session::new(chrono::Utc::now());
 
-    run_read_loop(&ctx, &mut reader, &mut session, &config).await;
+    let mut guard = ConnectionGuard::new(
+        ctx.clone(),
+        writer.abort_handle(),
+        translator.abort_handle(),
+        config.shutdown_timeout,
+    );
+    run_read_loop(&ctx, &mut reader, &mut session, &config, &mut shutdown).await;
 
     // ── 清理:离房 → 释放限流名额 → 摘除注册表 → 关闭发送队列 ──
-    if let Some(player) = ctx.authed_player() {
-        let _ = deps
-            .rooms
-            .leave_all(player.player_id, "connection closed")
-            .await;
-    }
-    if holding_unauth_slot && !ctx.is_authenticated() {
-        deps.auth_gate.release(peer.ip());
-    }
-    deps.connections.remove(conn_id);
+    guard.cleanup().await;
+    deps.connections.begin_drain(conn_id);
     translator.abort();
-    // ctx 与 outbound 各持有一份发送端克隆;写 task 只有在全部发送端关闭后
-    // 才会退出,二者必须先于 writer.await 丢弃,否则连接处理器挂起并泄漏
-    // 连接数名额(accept_loop 信号量永不归还)。
+    let _ = translator.await;
+    // Drain only up to the configured deadline; a stalled peer cannot hold a connection slot.
     drop(ctx);
     drop(outbound);
-    let _ = writer.await;
-    metrics::gauge!("longshipx_connections_active").decrement(1.0);
+    if tokio::time::timeout(config.write_drain_timeout, &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+        let _ = writer.await;
+    }
+    drop(guard);
     tracing::debug!(conn = %conn_id, %peer, "连接结束");
 }
 
@@ -91,6 +107,7 @@ async fn run_read_loop(
     reader: &mut FrameReader<TlsTcpStream>,
     session: &mut Session,
     config: &TcpGatewayConfig,
+    shutdown: &mut watch::Receiver<bool>,
 ) {
     let mut bucket = TokenBucket::new(config.rate);
     loop {
@@ -102,6 +119,13 @@ async fn run_read_loop(
         };
         let deadline = tokio::time::Instant::now() + timeout;
         tokio::select! {
+            biased;
+            _ = async { let _ = shutdown.wait_for(|stop| *stop).await; } => {
+                let _ = ctx.try_send(OutboundMessage::Shutdown(longshipx_protocol::generated::ServerShutdownNotice {
+                    message: "服务器即将维护,请保存进度并重连".into(),
+                }));
+                return;
+            },
             frame = reader.read_frame() => match frame {
                 Ok(Some(frame)) => {
                     session.touch_heartbeat(chrono::Utc::now());

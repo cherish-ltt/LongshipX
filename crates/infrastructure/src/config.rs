@@ -20,6 +20,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkConfig {
+    pub write_drain_timeout_ms: u64,
     pub tcp_bind_addr: String,
     pub http_bind_addr: String,
     /// 可选的 HTTP→HTTPS 跳转监听地址;None = 不绑定任何明文监听(PRD R1)。
@@ -174,6 +175,7 @@ impl Config {
 
 fn network_from_lookup(lookup: &mut Lookup<'_>) -> ConfigResult<NetworkConfig> {
     Ok(NetworkConfig {
+        write_drain_timeout_ms: env_u64(lookup, "SERVER_WRITE_DRAIN_TIMEOUT_MS", 1000)?,
         tcp_bind_addr: env_str(lookup, "SERVER_TCP_BIND_ADDR", "0.0.0.0:8080"),
         http_bind_addr: env_str(lookup, "SERVER_HTTP_BIND_ADDR", "0.0.0.0:8081"),
         http_redirect_addr: env_opt_str(lookup, "SERVER_HTTP_REDIRECT_ADDR"),
@@ -350,6 +352,7 @@ mod tests {
     #[test]
     fn defaults_match_prd_table() {
         let config = Config::from_lookup(|_| None).unwrap();
+        assert_eq!(config.network.write_drain_timeout_ms, 1000);
         assert_eq!(config.network.tcp_bind_addr, "0.0.0.0:8080");
         assert_eq!(config.network.http_bind_addr, "0.0.0.0:8081");
         assert_eq!(
@@ -406,6 +409,7 @@ mod tests {
             ("SERVER_TCP_BIND_ADDR", "127.0.0.1:9000"),
             ("SERVER_HTTP_REDIRECT_ADDR", "0.0.0.0:80"),
             ("SERVER_MAX_FRAME_SIZE", "4096"),
+            ("SERVER_WRITE_DRAIN_TIMEOUT_MS", "25"),
             ("SERVER_MAX_CONNECTIONS", "500"),
             ("SERVER_ACCEPT_CONCURRENCY", "32"),
             ("SERVER_TCP_NODELAY", "false"),
@@ -422,6 +426,7 @@ mod tests {
             Some("0.0.0.0:80")
         );
         assert_eq!(config.network.max_frame_size, 4096);
+        assert_eq!(config.network.write_drain_timeout_ms, 25);
         assert_eq!(config.network.max_connections, 500);
         assert_eq!(config.network.accept_concurrency, 32);
         assert!(!config.network.tcp_nodelay);
