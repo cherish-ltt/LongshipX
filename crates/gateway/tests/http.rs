@@ -301,7 +301,10 @@ async fn audit_auth_hash_must_not_block_unrelated_runtime_tasks() {
     let audit = Arc::new(NullAudit);
     let register = RegisterUseCase::new(
         accounts.clone(),
-        Arc::new(InMemoryRegistrationStore::new(accounts.clone(), players.clone())),
+        Arc::new(InMemoryRegistrationStore::new(
+            accounts.clone(),
+            players.clone(),
+        )),
         hasher.clone(),
         audit.clone(),
     );
