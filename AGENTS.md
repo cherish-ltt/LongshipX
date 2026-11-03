@@ -296,3 +296,8 @@ msrv = "1.95.0"
 - 变更记录位于 `docs/versions/`,**每个发布版本一个独立 Markdown 文件**,命名为 `vX.Y.Z.md`(如 `v0.1.0.md`、`v0.2.0.md`);不再维护单一 CHANGELOG 文件。
 - 版本文件按 Keep a Changelog 风格以 `Changed` / `Added` / `Fixed` / `Removed` 等小节记录用户可感知的变更;**发布新版本时新建对应文件**,与版本号改动在同一发布批次提交。
 - 发布流程:新增 `docs/versions/vX.Y.Z.md` + 版本号同步(`chore: 版本更新至 X.Y.Z`)→ 打注解 tag `vX.Y.Z` → push 分支与 tag。
+
+
+### 10.11 连接任务回收
+
+- 常驻监听器必须持续 join 已完成连接任务,不能只在停机时释放 JoinSet;记录 JoinError 并隔离单连接失败。

@@ -286,6 +286,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+accept worker 持续回收已经结束的连接 task,记录异常退出,历史连接数量不再累积 JoinSet 分配;连接并发上限不变。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint

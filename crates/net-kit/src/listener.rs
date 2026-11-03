@@ -79,36 +79,47 @@ pub async fn accept_loop_with<T, F, Fut>(
             let mut shutdown = shutdown.clone();
             tokio::spawn(async move {
                 let mut handshakes = tokio::task::JoinSet::new();
-                loop {
-                    tokio::select! {
-                        _ = shutdown.changed() => {
-                            tracing::info!(worker = id, "监听器收到停机信号,停止 accept");
-                            break;
+                'accept_loop: loop {
+                    // 回收旧任务不能取消正在进行的 accept/TLS 握手。
+                    let accepted = transport.accept();
+                    tokio::pin!(accepted);
+                    let accepted = loop {
+                        tokio::select! {
+                            completed = handshakes.join_next(), if !handshakes.is_empty() => {
+                                if let Some(Err(err)) = completed {
+                                    tracing::warn!(worker = id, error = %err, "连接处理任务异常退出");
+                                }
+                            }
+                            _ = shutdown.changed() => {
+                                tracing::info!(worker = id, "监听器收到停机信号,停止 accept");
+                                break 'accept_loop;
+                            }
+                            result = &mut accepted => break result,
                         }
-                        accepted = transport.accept() => match accepted {
-                            Ok((conn, peer)) => {
-                                // 连接名额在 accept 时刻同步预占:上限语义含握手中的连接。
-                                let permit = match &semaphore {
-                                    Some(sem) => match Semaphore::try_acquire_owned(sem.clone()) {
-                                        Ok(permit) => Some(permit),
-                                        Err(_) => {
-                                            tracing::debug!(%peer, "连接数已达上限,拒绝新连接");
-                                            continue;
-                                        },
+                    };
+                    match accepted {
+                        Ok((conn, peer)) => {
+                            // 连接名额在 accept 时刻同步预占:上限语义含握手中的连接。
+                            let permit = match &semaphore {
+                                Some(sem) => match Semaphore::try_acquire_owned(sem.clone()) {
+                                    Ok(permit) => Some(permit),
+                                    Err(_) => {
+                                        tracing::debug!(%peer, "连接数已达上限,拒绝新连接");
+                                        continue;
                                     },
-                                    None => None,
-                                };
-                                let handler = on_connection.clone();
-                                handshakes.spawn(async move {
-                                    let _permit = permit;
-                                    handler(conn, peer).await;
-                                });
-                            }
-                            Err(err) => {
-                                tracing::warn!(worker = id, error = %err, "accept 失败,稍后重试");
-                                tokio::time::sleep(Duration::from_millis(50)).await;
-                            }
-                        }
+                                },
+                                None => None,
+                            };
+                            let handler = on_connection.clone();
+                            handshakes.spawn(async move {
+                                let _permit = permit;
+                                handler(conn, peer).await;
+                            });
+                        },
+                        Err(err) => {
+                            tracing::warn!(worker = id, error = %err, "accept 失败,稍后重试");
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        },
                     }
                 }
                 handshakes.abort_all();
