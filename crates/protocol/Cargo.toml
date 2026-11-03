@@ -2,7 +2,7 @@
 name = "longshipx-protocol"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 authors = ["The LongshipX Contributors"]
 description = "游戏消息协议:protobuf 定义、prost 生成、帧编解码适配与消息路由表"
 license = "MIT OR Apache-2.0"

@@ -2,7 +2,7 @@
 name = "longshipx-gateway"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 authors = ["The LongshipX Contributors"]
 description = "接口层:TCP+TLS 长连接入口、HTTP(axum)入口、鉴权/限流中间件与消息路由装配"
 license = "MIT OR Apache-2.0"
@@ -37,6 +37,7 @@ metrics = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+libmimalloc-sys = { workspace = true }
 # 路由层单测(oneshot 请求)
 tower = { workspace = true }
 http-body-util = { workspace = true }
