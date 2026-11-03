@@ -7,7 +7,7 @@
 use crate::error::GatewayError;
 use axum::Router;
 use axum::extract::Request;
-use axum::http::HeaderValue;
+use axum::http::{HeaderValue, StatusCode, uri::Authority};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::any;
 use std::net::SocketAddr;
@@ -56,32 +56,49 @@ pub async fn serve_https(
         .map_err(|_| GatewayError::Config("HTTPS 监听任务意外退出".into()))?
 }
 
-/// HTTP→HTTPS 跳转路由:保留 Host 与 path?query,308 保持请求方法与语义。
-pub fn redirect_router() -> Router {
-    async fn to_https(request: Request) -> Response {
+/// HTTP→HTTPS 跳转路由:保留主机与 path?query,端口使用实际 HTTPS 监听端口。
+pub fn redirect_router(https_port: u16) -> Router {
+    async fn to_https(request: Request, https_port: u16) -> Response {
         let (parts, _) = request.into_parts();
-        let host = parts
+        let Some(host) = parts
             .headers
             .get("host")
             .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_string();
+            .and_then(|value| value.parse::<Authority>().ok())
+            .filter(|value| {
+                let host = value.host();
+                let suffix = &value.as_str()[host.len()..];
+                !value.as_str().contains('@')
+                    && !host.is_empty()
+                    && (suffix.is_empty()
+                        || (suffix.starts_with(':') && value.port_u16().is_some()))
+            })
+        else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
         let path = parts
             .uri
             .path_and_query()
             .map(|part| part.as_str().to_owned())
             .unwrap_or_else(|| "/".to_string());
-        let target = format!("https://{host}{path}");
+        let host = host.host();
+        let authority = if https_port == 443 {
+            host.to_string()
+        } else {
+            format!("{host}:{https_port}")
+        };
+        let target = format!("https://{authority}{path}");
         tracing::debug!(%target, "HTTP 请求跳转 HTTPS");
         Redirect::permanent(&target).into_response()
     }
-    Router::new().fallback(any(to_https))
+    Router::new().fallback(any(move |request: Request| to_https(request, https_port)))
 }
 
 /// 绑定可选的明文跳转监听;仅输出 308 跳转,不承载任何业务。返回实际绑定地址。
 pub async fn serve_redirect(
     addr: SocketAddr,
-    mut shutdown: watch::Receiver<bool>,
+    https_port: u16,
+    shutdown: watch::Receiver<bool>,
 ) -> Result<SocketAddr, GatewayError> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -92,15 +109,14 @@ pub async fn serve_redirect(
     tracing::info!(%bound, "HTTP→HTTPS 跳转监听已就绪");
     let mut shutdown_for_axum = shutdown.clone();
     tokio::spawn(async move {
-        let serve_future =
-            axum::serve(listener, redirect_router()).with_graceful_shutdown(async move {
+        let serve_future = axum::serve(listener, redirect_router(https_port))
+            .with_graceful_shutdown(async move {
                 let _ = shutdown_for_axum.wait_for(|done| *done).await;
             });
         if let Err(err) = serve_future.await {
             tracing::error!(error = %err, "跳转监听异常退出");
         }
     });
-    let _ = &mut shutdown;
     Ok(bound)
 }
 
@@ -129,7 +145,7 @@ mod tests {
             .header("host", "game.example.com")
             .body(Body::empty())
             .unwrap();
-        let response = redirect_router().oneshot(request).await.unwrap();
+        let response = redirect_router(443).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
         assert_eq!(
             response.headers()["location"],
@@ -144,7 +160,7 @@ mod tests {
             .header("host", "h.local")
             .body(Body::empty())
             .unwrap();
-        let response = redirect_router().oneshot(request).await.unwrap();
+        let response = redirect_router(443).oneshot(request).await.unwrap();
         assert_eq!(response.headers()["location"], "https://h.local/");
     }
 
@@ -161,5 +177,41 @@ mod tests {
             response.headers()["strict-transport-security"],
             "max-age=63072000; includeSubDomains"
         );
+    }
+
+    #[tokio::test]
+    async fn redirect_replaces_ports_and_validates_authority() {
+        for (host, port, target) in [
+            ("example.com:80", 443, "https://example.com/a?q=1"),
+            ("example.com:8080", 8443, "https://example.com:8443/a?q=1"),
+            ("[::1]:8080", 8443, "https://[::1]:8443/a?q=1"),
+            ("[::1]", 443, "https://[::1]/a?q=1"),
+        ] {
+            let request = Request::builder()
+                .uri("/a?q=1")
+                .header("host", host)
+                .body(Body::empty())
+                .unwrap();
+            let response = redirect_router(port).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+            assert_eq!(response.headers()["location"], target);
+        }
+        for host in [
+            None,
+            Some(""),
+            Some("bad/path"),
+            Some("user@example.com"),
+            Some("example.com:99999"),
+        ] {
+            let mut request = Request::builder().uri("/");
+            if let Some(host) = host {
+                request = request.header("host", host);
+            }
+            let response = redirect_router(443)
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
     }
 }
