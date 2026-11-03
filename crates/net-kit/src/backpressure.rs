@@ -5,39 +5,70 @@
 
 use crate::codec::Frame;
 use crate::error::NetError;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// 发送队列的入站端:克隆廉价,可被连接处理器、房间广播、停机通知共享。
 #[derive(Clone)]
 pub struct OutboundSender {
     tx: mpsc::Sender<Frame>,
+    disconnected: watch::Sender<bool>,
 }
 
 impl OutboundSender {
     pub fn new(tx: mpsc::Sender<Frame>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            disconnected: watch::channel(false).0,
+        }
     }
 
     pub fn capacity(&self) -> usize {
         self.tx.max_capacity()
     }
 
-    /// 非阻塞入队:满 → `QueueFull`(调用方应断开连接),关闭 → `Closed`。
+    /// 非阻塞入队:满 → `QueueFull` 并永久标记断开,关闭 → `Closed`。
     pub fn try_send_frame(&self, frame: Frame) -> Result<(), NetError> {
-        match self.tx.try_send(frame) {
+        if self.is_closed() {
+            return Err(NetError::Closed);
+        }
+        let result = match self.tx.try_send(frame) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => Err(NetError::QueueFull),
             Err(mpsc::error::TrySendError::Closed(_)) => Err(NetError::Closed),
+        };
+        if result.is_err() {
+            self.disconnect();
         }
+        result
     }
 
     /// 阻塞入队:仅用于低频关键消息(如停机通知)。
     pub async fn send_frame(&self, frame: Frame) -> Result<(), NetError> {
-        self.tx.send(frame).await.map_err(|_| NetError::Closed)
+        tokio::select! {
+            biased;
+            _ = self.disconnected() => Err(NetError::Closed),
+            result = self.tx.send(frame) => result.map_err(|_| NetError::Closed),
+        }
     }
 
     pub fn is_closed(&self) -> bool {
-        self.tx.is_closed()
+        self.tx.is_closed() || *self.disconnected.borrow()
+    }
+
+    pub fn disconnect(&self) {
+        self.disconnected.send_replace(true);
+    }
+
+    pub async fn disconnected(&self) {
+        let mut signal = self.disconnected.subscribe();
+        tokio::select! {
+            _ = signal.wait_for(|closed| *closed) => {},
+            _ = self.tx.closed() => {},
+        }
+    }
+
+    pub(crate) fn disconnect_signal(&self) -> watch::Receiver<bool> {
+        self.disconnected.subscribe()
     }
 }
 
@@ -51,13 +82,22 @@ mod tests {
 
     #[tokio::test]
     async fn bounded_queue_reports_full_then_closed() {
-        let (tx, rx) = mpsc::channel(2);
+        let (tx, mut rx) = mpsc::channel(2);
         let sender = OutboundSender::new(tx);
         sender.try_send_frame(frame(1)).unwrap();
         sender.try_send_frame(frame(2)).unwrap();
         assert!(matches!(
             sender.try_send_frame(frame(3)),
             Err(NetError::QueueFull)
+        ));
+        rx.recv().await.unwrap();
+        assert!(
+            sender.is_closed(),
+            "draining old frames must not revive a failed queue"
+        );
+        assert!(matches!(
+            sender.try_send_frame(frame(4)),
+            Err(NetError::Closed)
         ));
         drop(rx);
         assert!(matches!(

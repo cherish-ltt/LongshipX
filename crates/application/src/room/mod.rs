@@ -3,6 +3,8 @@
 
 pub mod actor;
 pub mod service;
+pub mod sink;
+pub use sink::RoomEventSink;
 
 pub use actor::{ROOM_EVENT_CAPACITY, RoomCommand, RoomEvent, RoomHandle};
 pub use service::{RoomService, RoomServiceConfig};
