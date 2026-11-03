@@ -20,6 +20,15 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkConfig {
+    pub tcp_enabled: bool,
+    pub kcp_enabled: bool,
+    pub kcp_bind_addr: String,
+    pub kcp_mtu: u32,
+    pub kcp_window: u16,
+    pub kcp_interval_ms: u64,
+    pub kcp_idle_timeout_secs: u64,
+    pub kcp_max_sessions: usize,
+    pub kcp_queue_capacity: usize,
     pub write_drain_timeout_ms: u64,
     pub tcp_bind_addr: String,
     pub http_bind_addr: String,
@@ -158,6 +167,35 @@ impl Config {
 
     /// 启动前一致性校验。
     pub fn validate(&self) -> ConfigResult<()> {
+        if !self.network.tcp_enabled && !self.network.kcp_enabled {
+            return Err(ConfigError::Invalid {
+                name: "SERVER_TCP_ENABLED",
+                reason: "at least one game transport must be enabled".into(),
+            });
+        }
+        if self.network.kcp_enabled {
+            let n = &self.network;
+            if !(576..=1400).contains(&n.kcp_mtu)
+                || n.kcp_window == 0
+                || !(1..=1000).contains(&n.kcp_interval_ms)
+                || n.kcp_idle_timeout_secs == 0
+                || n.kcp_max_sessions == 0
+                || n.kcp_max_sessions > tokio::sync::Semaphore::MAX_PERMITS
+                || n.kcp_queue_capacity == 0
+                || n.kcp_queue_capacity > tokio::sync::Semaphore::MAX_PERMITS
+            {
+                return Err(ConfigError::Invalid {
+                    name: "SERVER_KCP_*",
+                    reason: "invalid KCP MTU, window, interval or resource limits".into(),
+                });
+            }
+            if n.kcp_bind_addr.parse::<std::net::SocketAddr>().is_err() {
+                return Err(ConfigError::Invalid {
+                    name: "SERVER_KCP_BIND_ADDR",
+                    reason: "expected IP:port".into(),
+                });
+            }
+        }
         if self.network.heartbeat_timeout_secs < 2 * self.network.heartbeat_interval_secs {
             return Err(ConfigError::Invalid {
                 name: "SERVER_HEARTBEAT_TIMEOUT_SECS",
@@ -190,6 +228,15 @@ impl Config {
 
 fn network_from_lookup(lookup: &mut Lookup<'_>) -> ConfigResult<NetworkConfig> {
     Ok(NetworkConfig {
+        tcp_enabled: env_bool(lookup, "SERVER_TCP_ENABLED", true)?,
+        kcp_enabled: env_bool(lookup, "SERVER_KCP_ENABLED", false)?,
+        kcp_bind_addr: env_str(lookup, "SERVER_KCP_BIND_ADDR", "0.0.0.0:8080"),
+        kcp_mtu: env_u32(lookup, "SERVER_KCP_MTU", 1200)?,
+        kcp_window: env_u16(lookup, "SERVER_KCP_WINDOW", 64)?,
+        kcp_interval_ms: env_u64(lookup, "SERVER_KCP_INTERVAL_MS", 10)?,
+        kcp_idle_timeout_secs: env_u64(lookup, "SERVER_KCP_IDLE_TIMEOUT_SECS", 60)?,
+        kcp_max_sessions: env_usize(lookup, "SERVER_KCP_MAX_SESSIONS", 1024)?,
+        kcp_queue_capacity: env_usize(lookup, "SERVER_KCP_QUEUE_CAPACITY", 256)?,
         write_drain_timeout_ms: env_u64(lookup, "SERVER_WRITE_DRAIN_TIMEOUT_MS", 1000)?,
         tcp_bind_addr: env_str(lookup, "SERVER_TCP_BIND_ADDR", "0.0.0.0:8080"),
         http_bind_addr: env_str(lookup, "SERVER_HTTP_BIND_ADDR", "0.0.0.0:8081"),
@@ -335,8 +382,11 @@ impl fmt::Display for Config {
         // 🔴 不打印任何敏感值:仅输出关键非敏感项。
         write!(
             f,
-            "Config {{ tcp: {}, http: {}, max_frame: {}, max_conns: {}, db_max_conns: {}, metrics_port: {} }}",
+            "Config {{ tcp: {} (enabled={}), kcp: {} (enabled={}), http: {}, max_frame: {}, max_conns: {}, db_max_conns: {}, metrics_port: {} }}",
             self.network.tcp_bind_addr,
+            self.network.tcp_enabled,
+            self.network.kcp_bind_addr,
+            self.network.kcp_enabled,
             self.network.http_bind_addr,
             self.network.max_frame_size,
             self.network.max_connections,
@@ -350,6 +400,64 @@ impl fmt::Display for Config {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn kcp_configuration_defaults_modes_and_invalid_limits() {
+        let config = config_with(&[]).unwrap();
+        assert!(config.network.tcp_enabled);
+        assert!(!config.network.kcp_enabled);
+        assert_eq!(config.network.kcp_bind_addr, "0.0.0.0:8080");
+        assert_eq!(
+            (
+                config.network.kcp_mtu,
+                config.network.kcp_window,
+                config.network.kcp_interval_ms
+            ),
+            (1200, 64, 10)
+        );
+        assert_eq!(
+            (
+                config.network.kcp_idle_timeout_secs,
+                config.network.kcp_max_sessions,
+                config.network.kcp_queue_capacity
+            ),
+            (60, 1024, 256)
+        );
+        config.validate().unwrap();
+        for tcp in ["true", "false"] {
+            config_with(&[("SERVER_TCP_ENABLED", tcp), ("SERVER_KCP_ENABLED", "true")])
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
+        assert!(
+            config_with(&[("SERVER_TCP_ENABLED", "false")])
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        for (key, value) in [
+            ("SERVER_KCP_MTU", "575"),
+            ("SERVER_KCP_MTU", "1401"),
+            ("SERVER_KCP_WINDOW", "0"),
+            ("SERVER_KCP_INTERVAL_MS", "0"),
+            ("SERVER_KCP_INTERVAL_MS", "1001"),
+            ("SERVER_KCP_IDLE_TIMEOUT_SECS", "0"),
+            ("SERVER_KCP_MAX_SESSIONS", "0"),
+            ("SERVER_KCP_QUEUE_CAPACITY", "0"),
+            ("SERVER_KCP_BIND_ADDR", "invalid"),
+        ] {
+            assert!(
+                config_with(&[("SERVER_KCP_ENABLED", "true"), (key, value)])
+                    .unwrap()
+                    .validate()
+                    .is_err(),
+                "{key}={value}"
+            );
+        }
+        assert!(config_with(&[("SERVER_KCP_ENABLED", "maybe")]).is_err());
+        assert!(config_with(&[("SERVER_KCP_WINDOW", "65536")]).is_err());
+    }
 
     type Map = HashMap<&'static str, String>;
 

@@ -6,6 +6,17 @@
 # ============================================================
 
 # -------------------- 网络层 --------------------
+SERVER_TCP_ENABLED=true
+SERVER_KCP_ENABLED=false
+# KCP uses UDP; the same port number as TCP is valid. TLS 1.3 is mandatory.
+SERVER_KCP_BIND_ADDR=0.0.0.0:8080
+SERVER_KCP_MTU=1200
+SERVER_KCP_WINDOW=64
+SERVER_KCP_INTERVAL_MS=10
+SERVER_KCP_IDLE_TIMEOUT_SECS=60
+SERVER_KCP_MAX_SESSIONS=1024
+SERVER_KCP_QUEUE_CAPACITY=256
+
 # TCP+TLS 监听地址(IP:端口)
 SERVER_TCP_BIND_ADDR=0.0.0.0:8080
 

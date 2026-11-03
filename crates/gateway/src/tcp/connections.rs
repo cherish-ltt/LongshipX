@@ -5,14 +5,35 @@ use longshipx_net_kit::codec::Codec;
 use longshipx_protocol::{OutboundMessage, ProtocolError};
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use uuid::Uuid;
 
 #[derive(Default)]
 pub struct ConnectionRegistry {
     conns: Mutex<HashMap<Uuid, Option<OutboundSender>>>,
+    admitted: Arc<AtomicUsize>,
+}
+
+pub(crate) struct ConnectionPermit(Arc<AtomicUsize>);
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl ConnectionRegistry {
+    pub(crate) fn try_acquire(&self, limit: usize) -> Option<ConnectionPermit> {
+        self.admitted
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < limit).then(|| count + 1)
+            })
+            .ok()?;
+        Some(ConnectionPermit(self.admitted.clone()))
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -83,6 +104,31 @@ mod tests {
 
     fn ack() -> OutboundMessage {
         OutboundMessage::HeartbeatAck(HeartbeatAck { server_ts_ms: 1 })
+    }
+
+    #[test]
+    fn shared_admission_limit_is_atomic_and_raii_releases() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let barrier = Arc::new(std::sync::Barrier::new(16));
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let registry = registry.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    registry.try_acquire(4)
+                })
+            })
+            .collect();
+        let permits: Vec<_> = handles
+            .into_iter()
+            .filter_map(|handle| handle.join().unwrap())
+            .collect();
+        assert_eq!(permits.len(), 4);
+        assert!(registry.try_acquire(4).is_none());
+        drop(permits);
+        assert!(registry.try_acquire(1).is_some());
+        assert!(registry.try_acquire(0).is_none());
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub(crate) struct Admission {
     pub deadline: tokio::time::Instant,
     permit: Option<crate::tcp::auth_gate::AuthPermit>,
     shutdown: watch::Receiver<bool>,
+    _connection: super::connections::ConnectionPermit,
 }
 
 impl Admission {
@@ -28,8 +29,10 @@ impl Admission {
         deps: &GatewayDeps,
         peer: SocketAddr,
         timeout: std::time::Duration,
+        max_connections: usize,
         shutdown: watch::Receiver<bool>,
     ) -> Option<Self> {
+        let connection = deps.connections.try_acquire(max_connections)?;
         let Some(permit) = deps.auth_gate.permit(peer.ip()) else {
             metrics::counter!("longshipx_unauth_rejected_total").increment(1);
             tracing::debug!(%peer, "未鉴权连接超过单 IP 上限,拒绝");
@@ -39,6 +42,7 @@ impl Admission {
             deadline: tokio::time::Instant::now() + timeout,
             permit: Some(permit),
             shutdown,
+            _connection: connection,
         })
     }
 }
@@ -51,14 +55,22 @@ pub async fn handle_connection(
     config: TcpGatewayConfig,
 ) {
     let (_shutdown_tx, shutdown) = watch::channel(false);
-    let Some(admission) = Admission::acquire(&deps, peer, config.unauth_timeout, shutdown) else {
+    let Some(admission) = Admission::acquire(
+        &deps,
+        peer,
+        config.unauth_timeout,
+        config.max_connections,
+        shutdown,
+    ) else {
         return;
     };
     handle_admitted_connection(stream, peer, deps, config, admission).await;
 }
 
-pub(crate) async fn handle_admitted_connection(
-    stream: TlsTcpStream,
+pub(crate) async fn handle_admitted_connection<
+    S: longshipx_net_kit::transport::ConnectionIo + 'static,
+>(
+    stream: S,
     peer: SocketAddr,
     deps: Arc<GatewayDeps>,
     config: TcpGatewayConfig,
@@ -112,7 +124,6 @@ pub(crate) async fn handle_admitted_connection(
         translator.abort();
         let _ = translator.await;
     }
-    drop(admission);
     // Drain only up to the configured deadline; a stalled peer cannot hold a connection slot.
     drop(ctx);
     drop(outbound);
@@ -123,14 +134,15 @@ pub(crate) async fn handle_admitted_connection(
         writer.abort();
         let _ = writer.await;
     }
+    drop(admission);
     drop(guard);
     tracing::debug!(conn = %conn_id, %peer, "连接结束");
 }
 
 /// 读循环:超时/限流/解码/鉴权门/分发。返回即连接结束。
-async fn run_read_loop(
+async fn run_read_loop<S: longshipx_net_kit::transport::ConnectionIo>(
     ctx: &ConnContext,
-    reader: &mut FrameReader<TlsTcpStream>,
+    reader: &mut FrameReader<S>,
     session: &mut Session,
     config: &TcpGatewayConfig,
     admission: &mut Admission,

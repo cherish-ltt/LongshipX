@@ -1,5 +1,5 @@
 //! 快速开始客户端(README 示例的可运行版本):
-//! TCP+TLS 绑定 → 获取角色信息 → 加入房间聊天(HTTP 注册/登录见 README 的 curl 示例)。
+//! TCP/KCP + TLS 绑定 → 获取角色信息 → 加入房间聊天(HTTPS 注册/登录见 README)。
 //!
 //! ```bash
 //! # 1. 先通过 HTTP 拿 token(见 README):
@@ -48,9 +48,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_root_certificates(roots)
     .with_no_client_auth();
     let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
-    let tcp = tokio::net::TcpStream::connect(&server_addr).await?;
+    let transport = flag_value(&args, "--transport", "tcp");
+    let raw: Box<dyn longshipx_net_kit::transport::ConnectionIo> = match transport.as_str() {
+        "tcp" => Box::new(tokio::net::TcpStream::connect(&server_addr).await?),
+        "kcp" => {
+            let n = longshipx_infrastructure::config::Config::from_env()?.network;
+            Box::new(
+                longshipx_net_kit::kcp::KcpStream::connect(
+                    server_addr.parse()?,
+                    longshipx_net_kit::kcp::KcpSettings {
+                        mtu: n.kcp_mtu,
+                        window: n.kcp_window,
+                        interval: std::time::Duration::from_millis(n.kcp_interval_ms),
+                        idle_timeout: std::time::Duration::from_secs(n.kcp_idle_timeout_secs),
+                        max_sessions: n.kcp_max_sessions,
+                        queue_capacity: n.kcp_queue_capacity,
+                    },
+                )
+                .await?,
+            )
+        },
+        _ => return Err("--transport must be tcp or kcp".into()),
+    };
     let domain = rustls::pki_types::ServerName::try_from("localhost".to_string())?;
-    let (mut reader, mut writer) = tokio::io::split(connector.connect(domain, tcp).await?);
+    let tls = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        connector.connect(domain, raw),
+    )
+    .await??;
+    let (mut reader, mut writer) = tokio::io::split(tls);
     println!("TLS 握手完成:{server_addr}");
 
     let max_frame = 65_536usize;
