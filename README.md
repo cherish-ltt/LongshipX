@@ -286,6 +286,9 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --wor
 
 ## 开发与测试
 
+单 TCP 连接同时仅在一个房间:加入后再次创建或加入其他房间返回冲突,必须先显式离开;重复加入当前房间保持幂等且不重复广播。拒绝切换不会丢失当前成员身份。
+
+
 ```bash
 cargo fmt --all -- --check                  # 格式
 cargo clippy --all-targets -- -D warnings   # lint

@@ -91,6 +91,13 @@ pub async fn handle_join_room(
         Ok(room_id) => room_id,
         Err(message_text) => return Ok(Some(error_notification(ERR_INVALID_INPUT, &message_text))),
     };
+    if let Some(current) = ctx.current_room() {
+        return if target == Some(current) {
+            Ok(None)
+        } else {
+            Ok(Some(error_notification(ERR_CONFLICT, "请先离开当前房间")))
+        };
+    }
     match ctx
         .deps
         .rooms

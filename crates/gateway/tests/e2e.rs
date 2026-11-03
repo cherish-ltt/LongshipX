@@ -399,3 +399,6 @@ async fn rate_limit_exceeded_disconnects() {
     assert!(outcome.is_ok(), "应在限流后收到错误或被断开");
     server.shutdown_tx.send_replace(true);
 }
+
+#[path = "e2e/room_membership.rs"]
+mod room_membership;
