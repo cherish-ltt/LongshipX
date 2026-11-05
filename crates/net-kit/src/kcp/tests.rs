@@ -4,7 +4,7 @@ use rustls::pki_types::pem::PemObject;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-fn settings() -> KcpSettings {
+pub(super) fn settings() -> KcpSettings {
     KcpSettings {
         mtu: 1200,
         window: 64,
@@ -127,6 +127,21 @@ fn packet_boundary_rejects_invalid_and_message_mode_datagrams() {
     invalid[5] = 0;
     invalid.extend_from_slice(&[0]);
     assert_eq!(driver::packet_conv(&invalid, 1200), None);
+    let mut invalid = packet.clone();
+    invalid[..4].fill(0);
+    assert_eq!(driver::packet_conv(&invalid, 1200), None);
+    let mut invalid = packet.clone();
+    invalid[4] = 0;
+    assert_eq!(driver::packet_conv(&invalid, 1200), None);
+
+    let mut payload = KcpPacketHeader::new(1, kcp_ovo::KcpCmd::Push, 0, 64, 0, 0, 0, 1172)
+        .to_bytes()
+        .unwrap();
+    payload.resize(1200, 42);
+    assert_eq!(driver::packet_conv(&payload, 1200), Some(1));
+    assert_eq!(driver::packet_conv(&payload[..1199], 1200), None);
+    payload.push(42);
+    assert_eq!(driver::packet_conv(&payload, 1200), None);
 }
 
 #[tokio::test]

@@ -7,12 +7,11 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
-pub(super) fn packet_conv(packet: &[u8], mtu: u32) -> Option<u32> {
+pub(super) fn packet_conv(mut packet: &[u8], mtu: u32) -> Option<u32> {
     if packet.len() > mtu as usize {
         return None;
     }
-    let (header, data) =
-        KcpPacketHeader::from_bytes(&mut kcp_ovo::bytes::Bytes::copy_from_slice(packet)).ok()?;
+    let (header, data) = KcpPacketHeader::from_bytes(&mut packet).ok()?;
     (header.conv != 0 && header.frg == 0 && header.len as usize == data.len())
         .then_some(header.conv)
 }
@@ -52,7 +51,7 @@ pub(super) async fn run(
     let mut sent = 0;
     let mut eof = false;
     let mut outgoing = vec![0; core.mss as usize];
-    let mut incoming = kcp_ovo::bytes::Bytes::new();
+    let mut incoming = Vec::new();
     let mut offset = 0;
     let mut inputs = 0;
     loop {
@@ -93,7 +92,7 @@ pub(super) async fn run(
                 let len = result?;
                 if len == 0 { return Err(io::ErrorKind::WriteZero.into()); }
                 offset += len;
-                if offset == incoming.len() { incoming = kcp_ovo::bytes::Bytes::new(); offset = 0; }
+                if offset == incoming.len() { incoming = Vec::new(); offset = 0; }
             },
             result = reader.read(&mut outgoing), if !eof && core.waitsnd() < usize::from(settings.window) => {
                 let len = result?;

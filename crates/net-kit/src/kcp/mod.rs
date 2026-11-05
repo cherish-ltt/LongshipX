@@ -6,6 +6,8 @@ mod transport;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod upstream_tests;
 
 pub use stream::KcpStream;
 pub use transport::KcpTransport;

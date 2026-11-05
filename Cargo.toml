@@ -37,8 +37,8 @@ longshipx-gateway = { path = "crates/gateway", version = "=0.3.0" }
 longshipx-migration = { path = "migration", version = "=0.3.0" }
 
 # ── 异步运行时与网络 ──
-tokio = "=1.52.3"
-kcp-ovo = { version = "=0.5.1", default-features = false }
+tokio = "=1.53.1"
+kcp-ovo = { version = "=0.8.0", default-features = false }
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std"] }
 socket2 = "=0.6.5"
