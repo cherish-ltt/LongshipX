@@ -97,14 +97,14 @@ cargo run -p longshipx-server-bin --example quickstart_client -- \
 安全与兼容边界:
 
 - 网关强制 **TLS 1.3 over KCP**,客户端验证 CA 与主机名,之后才允许 Bind;不提供默认明文 token 路径,不启用 0-RTT。示例验证 `localhost`,生产客户端须验证真实服务名。
-- `kcp-ovo =0.5.1` 底层 stream-mode 使用 28B 大端头;不兼容标准 KCP 24B 头或上游高层消息 API,客户端应使用本仓库 `KcpStream` 加 TLS。无自动选路、NAT 迁移或 QUIC。
+- `kcp-ovo =0.8.0` 底层 stream-mode 使用 28B 大端头;不兼容标准 KCP 24B 头或上游高层消息 API,客户端应使用本仓库 `KcpStream` 加 TLS。无自动选路、NAT 迁移或 QUIC。
 - TLS 保护应用内容,**不认证外层 KCP 头/ACK**。伪造、重复及重放 UDP 包仍可能影响可用性;有界队列不是公网抗 DDoS。接入前即占 KCP session 槽,生产需另配 UDP 防火墙/限速。
 - `write` 仅进入本地有界缓冲,`flush` 等待 KCP 累积 ACK,不是对端应用处理确认;被伪造的 ACK 也不构成可信送达证明。drop/强制断开可能丢未确认数据;停机写排空受现有期限控制。
 - 无 KCP FIN;正常 TLS close_notify 或本地 idle/心跳期限结束连接。关闭的 `(peer, conv)` 隔离一个 idle 周期,防迟到包复活,占用 session 槽;高频重连可能先到此限制。新连接使用随机 conv,不承诺无限重连吞吐。
-- Rust/MSRV/CI 统一 **1.99.1**,Tokio **1.52.3**,锁文件 bytes **1.11.1** / log **0.4.29**。初测 0.5.0 的全局 allocator 冲突已由上游 [#36](https://github.com/cherish-ltt/kcp-ovo/issues/36) / [#37](https://github.com/cherish-ltt/kcp-ovo/pull/37) 修复,最终锁定 **0.5.1**,不强制改变应用分配器。本次没有修改上游。
+- Rust/MSRV/CI 统一 **1.99.1**,Tokio **1.53.1**,锁文件 bytes **1.12.1** / log **0.4.29**。初测 0.5.0 的全局 allocator 冲突已由上游 [#36](https://github.com/cherish-ltt/kcp-ovo/issues/36) / [#37](https://github.com/cherish-ltt/kcp-ovo/pull/37) 修复,当前锁定 **0.8.0**,不强制改变应用分配器。本次没有修改上游。v0.8.0 已解除 Tokio/bytes 的精确约束,恢复本项目原有 Tokio/bytes 版本;log 仍受上游精确约束。
 - 保留原有 System 计数分配器及泄漏阈值;压力测试统计同进程两端的活跃申请字节与RSS。不同档位会复用堆,不可据 RSS 差值宣称每连接占用更小。
 
-复跑单元、黑盒、冒烟、压力和性能结果见 [KCP 集成验证记录](docs/testing/kcp-integration.md)。公网弱网和生产容量仍须部署侧验收,不预设 KCP 更快。
+复跑单元、黑盒、冒烟、压力和性能结果见 [KCP 集成验证记录](docs/testing/kcp-integration.md);[v0.8.0 升级记录](docs/testing/kcp-upgrade-0.8.0.md) 区分逐版本应用点与本次重测结果。公网弱网和生产容量仍须部署侧验收,不预设 KCP 更快。
 
 ## 开发指南:亲手实现"注册角色(HTTP)"与"获取角色信息(TCP 命令)"
 

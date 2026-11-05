@@ -351,8 +351,8 @@ msrv = "1.99.1"
 
 ### 10.24 KCP 接入与测试
 
-- 游戏传输默认 TCP-only;可选 kcp-ovo 0.5.1 底层 stream-mode + TLS 1.3,不使用上游消息式高层 API,禁止裸 KCP 分发应用消息。domain/application/protobuf 不因传输变化而复制或改写。
+- 游戏传输默认 TCP-only;可选 kcp-ovo 0.8.0 底层 stream-mode + TLS 1.3,不使用上游消息式高层 API,禁止裸 KCP 分发应用消息。domain/application/protobuf 不因传输变化而复制或改写。
 - TCP/KCP 共享全局准入与单 IP 未鉴权配额、TLS/Bind 绝对期限及会话校验;KCP session/输入/发送缓冲必须有界,过载显式断会话。
 - `flush` 等待 KCP ACK 而非应用确认;无 wire FIN,关闭记录隔离一个 idle 周期且计入 session 上限,迟到包不能立刻复活会话。TLS 不保护 KCP 控制头,不得将其描述为防 DDoS 或可信 ACK。
-- 工具链/MSRV/CI 统一 Rust 1.99.1,Tokio 精确 1.52.3。使用已移除强制全局 allocator 的 kcp-ovo 0.5.1;保留 System 计数分配器及泄漏回归,不引入分配器特定 FFI。
+- 工具链/MSRV/CI 统一 Rust 1.99.1,Tokio 精确 1.53.1。kcp-ovo 0.8.0 使用标准库 Vec/切片接口,不依赖其已移除的 Tokio/bytes 重导出;保留 System 计数分配器及泄漏回归,不引入分配器特定 FFI。
 - 网络变更必须执行 TCP/KCP e2e、默认离线全仓测试;CI 另跑显式 bounded stress。64/256 连接压力和 20ms 单向用户态代理结果分开记录,用户态 TCP 转发延迟不等同内核丢包仿真。
