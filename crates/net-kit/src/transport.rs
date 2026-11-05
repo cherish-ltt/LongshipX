@@ -8,6 +8,10 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
+pub trait ConnectionIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
+
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin> ConnectionIo for T {}
+
 /// 传输抽象:accept 返回一条可读写的连接与对端地址。
 #[async_trait]
 pub trait Transport: Send + Sync {

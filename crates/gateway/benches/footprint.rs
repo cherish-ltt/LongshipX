@@ -3,7 +3,7 @@
 //! 不使用 criterion(内存足迹不是时间量):以"阶梯建连 + 快照"输出报告。
 //! 两个指标:
 //! * 进程 RSS —— macOS 走 `proc_pidinfo`,Linux 走 `/proc/self/statm`;
-//! * 活跃堆分配字节数 —— 全局计数分配器(alloc 累加 / dealloc 回减)。
+//! * 活跃堆分配字节数 —— 全局计数分配器的活跃申请字节数。
 //!
 //! 单进程内同时容纳服务端与客户端两端,因此"每连接成本"包含连接的两半。
 //! 服务端启用并发握手管线、客户端建连压成固定并发,规避系统 backlog 限制
@@ -80,23 +80,22 @@ fn resident_bytes() -> u64 {
             &mut info as *mut libc::proc_taskinfo as *mut core::ffi::c_void,
             size,
         );
-        if written == size {
-            info.pti_resident_size as u64
-        } else {
-            0
-        }
+        assert_eq!(written, size, "proc_pidinfo failed");
+        info.pti_resident_size as u64
     }
 }
 
 #[cfg(target_os = "linux")]
 fn resident_bytes() -> u64 {
-    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let statm = std::fs::read_to_string("/proc/self/statm").expect("read statm");
     let pages = statm
         .split_whitespace()
-        .next()
+        .nth(1)
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(0);
-    pages * 4096
+        .expect("resident page count");
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0, "page size unavailable");
+    pages * page_size as u64
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -314,7 +313,7 @@ async fn run() {
         live: LIVE_BYTES.load(Ordering::Relaxed),
     };
 
-    println!("连接内存足迹(loopback TLS,单进程含服务端与客户端两端):");
+    println!("连接内存足迹(loopback TLS,单进程含客户端与服务端):");
     println!("| 连接数 | ΔRSS (MiB) | 每连接 RSS (KiB) | 活跃堆分配 (MiB) | 每连接分配 (KiB) |");
     println!("| --- | --- | --- | --- | --- |");
     report_row(&baseline, 0);

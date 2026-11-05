@@ -51,12 +51,12 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     let tokens = connect_token_store(&config).await?;
     let services = build_services(&config, db.clone(), tokens)?;
     let tls_config = build_tls_config(&config.tls)?;
-    let tcp =
-        start_tcp_gateway(&config, &services, tls_config.clone(), shutdown_rx.clone()).await?;
+    let gateways =
+        start_game_gateways(&config, &services, tls_config.clone(), shutdown_rx.clone()).await?;
     start_http_server(&config, &services, tls_config, shutdown_rx.clone()).await?;
 
     shutdown::wait_for_signal(shutdown_tx).await;
-    graceful_teardown(&config, &services, &tcp, db).await;
+    graceful_teardown(&config, &services, gateways, db).await;
     Ok(())
 }
 
@@ -153,22 +153,17 @@ fn build_services(
     })
 }
 
-async fn start_tcp_gateway(
+async fn start_game_gateways(
     config: &Config,
     services: &Services,
     tls_config: Arc<rustls::ServerConfig>,
     shutdown_rx: watch::Receiver<bool>,
-) -> Result<Arc<TcpGateway>, Box<dyn Error>> {
+) -> Result<Vec<(Arc<TcpGateway>, tokio::task::JoinHandle<()>)>, Box<dyn Error>> {
     let acceptor = longshipx_net_kit::TlsAcceptor::from(tls_config);
-    let bind_addr: SocketAddr = config
-        .network
-        .tcp_bind_addr
-        .parse()
-        .map_err(|err| format!("SERVER_TCP_BIND_ADDR 非法: {err}"))?;
     let tcp_config = TcpGatewayConfig {
         shutdown_timeout: Duration::from_secs(config.app.shutdown_timeout_secs),
         write_drain_timeout: Duration::from_millis(config.network.write_drain_timeout_ms),
-        bind_addr,
+        bind_addr: "0.0.0.0:0".parse()?,
         max_frame_size: config.network.max_frame_size,
         send_queue_capacity: config.network.channel_per_conn,
         room_event_capacity: longshipx_application::room::ROOM_EVENT_CAPACITY,
@@ -195,12 +190,43 @@ async fn start_tcp_gateway(
         auth_gate: Arc::new(AuthGate::new(config.network.unauth_max_per_ip)),
         connections: Arc::new(ConnectionRegistry::new()),
     });
-    let gateway = Arc::new(TcpGateway::bind(tcp_config, acceptor, deps)?);
-    let addr = gateway.local_addr()?;
-    tracing::info!(%addr, "TCP+TLS 网关开始监听");
-    let gateway_for_run = gateway.clone();
-    tokio::spawn(async move { gateway_for_run.run(shutdown_rx).await });
-    Ok(gateway)
+    let mut gateways = Vec::new();
+    if config.network.tcp_enabled {
+        let mut settings = tcp_config;
+        settings.bind_addr = config
+            .network
+            .tcp_bind_addr
+            .parse()
+            .map_err(|err| format!("SERVER_TCP_BIND_ADDR 非法: {err}"))?;
+        let gateway = Arc::new(TcpGateway::bind(settings, acceptor.clone(), deps.clone())?);
+        tracing::info!(addr = %gateway.local_addr()?, "TCP+TLS 网关开始监听");
+        gateways.push(gateway);
+    }
+    if config.network.kcp_enabled {
+        let n = &config.network;
+        let mut settings = tcp_config;
+        settings.bind_addr = n.kcp_bind_addr.parse()?;
+        let kcp = longshipx_net_kit::kcp::KcpSettings {
+            mtu: n.kcp_mtu,
+            window: n.kcp_window,
+            interval: Duration::from_millis(n.kcp_interval_ms),
+            idle_timeout: Duration::from_secs(n.kcp_idle_timeout_secs),
+            max_sessions: n.kcp_max_sessions,
+            queue_capacity: n.kcp_queue_capacity,
+        };
+        let gateway = Arc::new(TcpGateway::bind_kcp(settings, kcp, acceptor, deps).await?);
+        tracing::info!(addr = %gateway.local_addr()?, "KCP+TLS 网关开始监听");
+        gateways.push(gateway);
+    }
+    Ok(gateways
+        .into_iter()
+        .map(|gateway| {
+            let worker = gateway.clone();
+            let shutdown = shutdown_rx.clone();
+            let task = tokio::spawn(async move { worker.run(shutdown).await });
+            (gateway, task)
+        })
+        .collect())
 }
 
 fn build_tls_config(tls: &TlsConfig) -> Result<Arc<rustls::ServerConfig>, Box<dyn Error>> {
@@ -208,7 +234,7 @@ fn build_tls_config(tls: &TlsConfig) -> Result<Arc<rustls::ServerConfig>, Box<dy
         Path::new(&tls.cert_path),
         Path::new(&tls.key_path),
     )?;
-    tracing::info!(cert = %tls.cert_path, "TLS 1.3 服务端证书加载完成(TCP/HTTP 共用)");
+    tracing::info!(cert = %tls.cert_path, "TLS 1.3 服务端证书加载完成(TCP/KCP/HTTP 共用)");
     Ok(config)
 }
 
@@ -255,19 +281,27 @@ async fn start_http_server(
 async fn graceful_teardown(
     config: &Config,
     services: &Services,
-    tcp: &TcpGateway,
+    gateways: Vec<(Arc<TcpGateway>, tokio::task::JoinHandle<()>)>,
     db: sea_orm::DatabaseConnection,
 ) {
     if let Err(err) = services.rooms.close_all("服务器即将停机").await {
         tracing::warn!(error = %err, "关闭房间时出现错误");
     }
 
-    let drain_timeout = Duration::from_secs(config.app.shutdown_timeout_secs);
-    if tcp.wait_until_drained(drain_timeout).await {
+    let mut drained = true;
+    // Gateway run owns the bounded drain/cancellation sequence; do not detach its accept workers.
+    for (gateway, task) in gateways {
+        if let Err(err) = task.await {
+            drained = false;
+            tracing::error!(error = %err, "游戏网关任务失败");
+        }
+        drained &= gateway.active_connections() == 0;
+    }
+    if drained {
         tracing::info!("所有连接已安全断开");
     } else {
         tracing::warn!(
-            timeout_secs = drain_timeout.as_secs(),
+            timeout_secs = config.app.shutdown_timeout_secs,
             "排空等待超时,强制关闭剩余连接"
         );
     }
@@ -283,3 +317,7 @@ async fn graceful_teardown(
 fn in_memory_tokens() -> Arc<dyn SessionTokenStore> {
     Arc::new(InMemoryTokenStore::new())
 }
+
+#[cfg(test)]
+#[path = "bootstrap_tests.rs"]
+mod tests;

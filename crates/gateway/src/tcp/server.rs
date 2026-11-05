@@ -1,4 +1,4 @@
-//! TCP+TLS 网关:监听绑定、accept 循环与停机联动。
+//! TCP/KCP + TLS 网关:共享准入、处理器与停机联动。
 
 use crate::tcp::config::TcpGatewayConfig;
 use crate::tcp::context::GatewayDeps;
@@ -8,24 +8,40 @@ use longshipx_net_kit::{AcceptLoopConfig, TcpTlsTransport, TlsAcceptor, accept_l
 use std::sync::Arc;
 use tokio::sync::watch;
 
-struct RawTcp(Arc<TcpTlsTransport>);
+enum RawTransport {
+    Tcp(TcpTlsTransport),
+    Kcp(longshipx_net_kit::kcp::KcpTransport),
+}
 
 #[async_trait::async_trait]
-impl Transport for RawTcp {
-    type Conn = tokio::net::TcpStream;
+impl Transport for RawTransport {
+    type Conn = Box<dyn longshipx_net_kit::transport::ConnectionIo>;
     async fn accept(&self) -> std::io::Result<(Self::Conn, std::net::SocketAddr)> {
-        self.0
-            .accept_tcp()
-            .await
-            .map_err(|err| std::io::Error::other(err.to_string()))
+        match self {
+            Self::Tcp(transport) => {
+                let (stream, peer) = transport
+                    .accept_tcp()
+                    .await
+                    .map_err(std::io::Error::other)?;
+                Ok((Box::new(stream), peer))
+            },
+            Self::Kcp(transport) => {
+                let (stream, peer) = transport.accept().await?;
+                Ok((Box::new(stream), peer))
+            },
+        }
     }
     fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        self.0.local_addr()
+        match self {
+            Self::Tcp(transport) => transport.local_addr(),
+            Self::Kcp(transport) => transport.local_addr(),
+        }
     }
 }
 
 pub struct TcpGateway {
-    transport: Arc<TcpTlsTransport>,
+    transport: Arc<RawTransport>,
+    acceptor: TlsAcceptor,
     deps: Arc<GatewayDeps>,
     config: TcpGatewayConfig,
 }
@@ -38,13 +54,31 @@ impl TcpGateway {
     ) -> Result<Self, crate::error::GatewayError> {
         let transport = TcpTlsTransport::bind(
             config.bind_addr,
-            acceptor,
+            acceptor.clone(),
             config.backlog,
             config.nodelay,
             Some(config.keepalive),
         )?;
         Ok(Self {
-            transport: Arc::new(transport),
+            transport: Arc::new(RawTransport::Tcp(transport)),
+            acceptor,
+            deps,
+            config,
+        })
+    }
+
+    pub async fn bind_kcp(
+        config: TcpGatewayConfig,
+        settings: longshipx_net_kit::kcp::KcpSettings,
+        acceptor: TlsAcceptor,
+        deps: Arc<GatewayDeps>,
+    ) -> Result<Self, crate::error::GatewayError> {
+        let transport = longshipx_net_kit::kcp::KcpTransport::bind(config.bind_addr, settings)
+            .await
+            .map_err(longshipx_net_kit::NetError::from)?;
+        Ok(Self {
+            transport: Arc::new(RawTransport::Kcp(transport)),
+            acceptor,
             deps,
             config,
         })
@@ -61,20 +95,22 @@ impl TcpGateway {
         let deps = self.deps.clone();
         let config = self.config;
         let connections_shutdown = shutdown.clone();
-        let transport = self.transport.clone();
+        let acceptor = self.acceptor.clone();
         let handshakes = Arc::new(tokio::sync::Semaphore::new(
             config.accept_concurrency.max(1) as usize,
         ));
-        let handler = move |stream: tokio::net::TcpStream, peer: std::net::SocketAddr| {
+        let handler = move |stream: Box<dyn longshipx_net_kit::transport::ConnectionIo>,
+                            peer: std::net::SocketAddr| {
             let deps = deps.clone();
             let mut shutdown = connections_shutdown.clone();
-            let transport = transport.clone();
+            let acceptor = acceptor.clone();
             let handshakes = handshakes.clone();
             async move {
                 let Some(admission) = handler::Admission::acquire(
                     &deps,
                     peer,
                     config.unauth_timeout,
+                    config.max_connections,
                     shutdown.clone(),
                 ) else {
                     return;
@@ -85,7 +121,7 @@ impl TcpGateway {
                 };
                 let result = tokio::select! {
                     _ = async { let _ = shutdown.wait_for(|stop| *stop).await; } => return,
-                    result = tokio::time::timeout_at(admission.deadline, transport.handshake(stream)) => result,
+                    result = tokio::time::timeout_at(admission.deadline, acceptor.accept(stream)) => result,
                 };
                 drop(slot);
                 let stream = match result {
@@ -103,7 +139,7 @@ impl TcpGateway {
             }
         };
         accept_loop_with(
-            Arc::new(RawTcp(self.transport.clone())),
+            self.transport.clone(),
             AcceptLoopConfig {
                 shutdown_timeout: self.config.shutdown_timeout,
                 max_concurrent: Some(self.config.max_connections),
@@ -113,6 +149,9 @@ impl TcpGateway {
             handler,
         )
         .await;
+        if let RawTransport::Kcp(transport) = self.transport.as_ref() {
+            transport.close().await;
+        }
         if !self.wait_until_drained(self.config.shutdown_timeout).await {
             tracing::error!("connection cleanup did not finish before shutdown deadline");
         }

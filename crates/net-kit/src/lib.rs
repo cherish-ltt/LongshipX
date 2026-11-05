@@ -8,6 +8,7 @@ pub mod backpressure;
 pub mod codec;
 pub mod connection;
 pub mod error;
+pub mod kcp;
 pub mod listener;
 pub mod tls;
 pub mod transport;

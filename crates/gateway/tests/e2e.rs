@@ -1,4 +1,4 @@
-//! 端到端测试(PRD 14 "Gateway/端到端"):真实 TCP+TLS 客户端连接网关,
+//! 端到端测试(PRD 14 "Gateway/端到端"):真实 TCP/KCP + TLS 客户端连接网关,
 //! 验证协议编解码、鉴权流程、房间广播、心跳与优雅停机。
 
 use longshipx_application::ports::SessionTokenStore as _;
@@ -70,19 +70,21 @@ async fn spawn_server_with_tokens(
     spawn_server_with_router_tokens(config, tokens, validation, build_router()).await
 }
 
-async fn spawn_server_with_router(
-    config: TcpGatewayConfig,
-    router: longshipx_protocol::Router<longshipx_gateway::tcp::ConnContext>,
-) -> TestServer {
-    let tokens = Arc::new(InMemoryTokenStore::new());
-    spawn_server_with_router_tokens(config, tokens.clone(), tokens, router).await
-}
-
 async fn spawn_server_with_router_tokens(
     config: TcpGatewayConfig,
     tokens: Arc<InMemoryTokenStore>,
     validation: Arc<dyn longshipx_application::ports::SessionTokenStore>,
     router: longshipx_protocol::Router<longshipx_gateway::tcp::ConnContext>,
+) -> TestServer {
+    spawn_server_transport(config, tokens, validation, router, false).await
+}
+
+async fn spawn_server_transport(
+    config: TcpGatewayConfig,
+    tokens: Arc<InMemoryTokenStore>,
+    validation: Arc<dyn longshipx_application::ports::SessionTokenStore>,
+    router: longshipx_protocol::Router<longshipx_gateway::tcp::ConnContext>,
+    kcp: bool,
 ) -> TestServer {
     let certs = test_certs();
     let acceptor =
@@ -108,7 +110,13 @@ async fn spawn_server_with_router_tokens(
         auth_gate: Arc::new(AuthGate::new(8)),
         connections: Arc::new(ConnectionRegistry::new()),
     });
-    let gateway = TcpGateway::bind(config, acceptor, deps.clone()).unwrap();
+    let gateway = if kcp {
+        TcpGateway::bind_kcp(config, kcp_settings(), acceptor, deps.clone())
+            .await
+            .unwrap()
+    } else {
+        TcpGateway::bind(config, acceptor, deps.clone()).unwrap()
+    };
     let addr = gateway.local_addr().unwrap();
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let handle = tokio::spawn(async move { gateway.run(shutdown_rx).await });
@@ -146,12 +154,24 @@ fn test_certs() -> (&'static str, &'static str) {
 }
 
 struct TestClient {
-    reader: ReadHalf<TlsStream<TcpStream>>,
-    writer: WriteHalf<TlsStream<TcpStream>>,
+    reader: ReadHalf<TlsStream<Box<dyn longshipx_net_kit::transport::ConnectionIo>>>,
+    writer: WriteHalf<TlsStream<Box<dyn longshipx_net_kit::transport::ConnectionIo>>>,
 }
 
 impl TestClient {
     async fn connect(addr: std::net::SocketAddr) -> Self {
+        Self::connect_transport(addr, false).await
+    }
+
+    async fn connect_transport(addr: std::net::SocketAddr, kcp: bool) -> Self {
+        Self::connect_with_settings(addr, kcp, kcp_settings()).await
+    }
+
+    async fn connect_with_settings(
+        addr: std::net::SocketAddr,
+        kcp: bool,
+        settings: longshipx_net_kit::kcp::KcpSettings,
+    ) -> Self {
         let mut roots = rustls::RootCertStore::empty();
         let (cert_pem, _) = test_certs();
         for cert in rustls::pki_types::CertificateDer::pem_slice_iter(cert_pem.as_bytes()) {
@@ -165,9 +185,22 @@ impl TestClient {
         .with_root_certificates(roots)
         .with_no_client_auth();
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-        let tcp = TcpStream::connect(addr).await.unwrap();
+        let raw: Box<dyn longshipx_net_kit::transport::ConnectionIo> = if kcp {
+            Box::new(
+                longshipx_net_kit::kcp::KcpStream::connect(addr, settings)
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            let tcp = TcpStream::connect(addr).await.unwrap();
+            tcp.set_nodelay(true).unwrap();
+            Box::new(tcp)
+        };
         let domain = rustls::pki_types::ServerName::try_from("localhost".to_string()).unwrap();
-        let tls = connector.connect(domain, tcp).await.unwrap();
+        let tls = tokio::time::timeout(Duration::from_secs(3), connector.connect(domain, raw))
+            .await
+            .unwrap()
+            .unwrap();
         let (reader, writer) = tokio::io::split(tls);
         Self { reader, writer }
     }
@@ -457,115 +490,145 @@ async fn revoked_session_cannot_read_profile() {
 
 #[tokio::test]
 async fn expired_session_cannot_execute_room_commands() {
-    let server = spawn_server().await;
-    let player = server.players.seed("expired");
-    let token = server
-        .tokens
-        .create(player.id(), Duration::from_millis(150))
-        .await
-        .unwrap();
-    let mut client = TestClient::connect(server.addr).await;
-    client
-        .send(&InboundMessage::Bind(pb::BindRequest { token }))
+    for kcp in [false, true] {
+        let tokens = Arc::new(InMemoryTokenStore::new());
+        let server = spawn_server_transport(
+            test_config("127.0.0.1:0".parse().unwrap()),
+            tokens.clone(),
+            tokens,
+            build_router(),
+            kcp,
+        )
         .await;
-    assert!(
-        matches!(client.recv_expect("bind").await, OutboundMessage::BindResult(result) if result.ok)
-    );
-    tokio::time::sleep(Duration::from_millis(180)).await;
-    client
-        .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
-            room_id: None,
-        }))
-        .await;
-    assert!(
-        matches!(client.recv_expect("rejected expired session").await, OutboundMessage::Error(error) if error.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
-    );
-    server.shutdown_tx.send_replace(true);
+        let player = server.players.seed("expired");
+        let token = server
+            .tokens
+            .create(player.id(), Duration::from_secs(1))
+            .await
+            .unwrap();
+        let mut client = TestClient::connect_transport(server.addr, kcp).await;
+        client
+            .send(&InboundMessage::Bind(pb::BindRequest { token }))
+            .await;
+        assert!(
+            matches!(client.recv_expect("bind").await, OutboundMessage::BindResult(result) if result.ok)
+        );
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        client
+            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                room_id: None,
+            }))
+            .await;
+        assert!(
+            matches!(client.recv_expect("rejected expired session").await, OutboundMessage::Error(error) if error.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+        );
+        kcp::stop(server).await;
+    }
 }
 
 #[tokio::test]
 async fn revoked_session_cannot_receive_new_room_broadcasts() {
-    let server = spawn_server().await;
-    let player = server.players.seed("revoked-broadcast");
-    let token = server
-        .tokens
-        .create(player.id(), Duration::from_secs(60))
+    for kcp in [false, true] {
+        let tokens = Arc::new(InMemoryTokenStore::new());
+        let server = spawn_server_transport(
+            test_config("127.0.0.1:0".parse().unwrap()),
+            tokens.clone(),
+            tokens,
+            build_router(),
+            kcp,
+        )
+        .await;
+        let player = server.players.seed("revoked-broadcast");
+        let token = server
+            .tokens
+            .create(player.id(), Duration::from_secs(60))
+            .await
+            .unwrap();
+        let mut client = TestClient::connect_transport(server.addr, kcp).await;
+        client
+            .send(&InboundMessage::Bind(pb::BindRequest { token }))
+            .await;
+        let _ = client.recv_expect("bind").await;
+        client
+            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                room_id: None,
+            }))
+            .await;
+        let OutboundMessage::RoomEvent(joined) = client.recv_expect("join").await else {
+            panic!("join event");
+        };
+        let Some(pb::room_event_notification::Event::MemberJoined(joined)) = joined.event else {
+            panic!("joined");
+        };
+        let room_id = longshipx_domain::RoomId(uuid::Uuid::parse_str(&joined.room_id).unwrap());
+        server.tokens.revoke_player(player.id()).await.unwrap();
+        server
+            .deps
+            .rooms
+            .chat(room_id, player.id(), "must not be delivered".into())
+            .await
+            .unwrap();
+        let reply = tokio::time::timeout(
+            Duration::from_secs(4),
+            read_frame(&mut client.reader, 65_536),
+        )
         .await
         .unwrap();
-    let mut client = TestClient::connect(server.addr).await;
-    client
-        .send(&InboundMessage::Bind(pb::BindRequest { token }))
-        .await;
-    let _ = client.recv_expect("bind").await;
-    client
-        .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
-            room_id: None,
-        }))
-        .await;
-    let OutboundMessage::RoomEvent(joined) = client.recv_expect("join").await else {
-        panic!("join event");
-    };
-    let Some(pb::room_event_notification::Event::MemberJoined(joined)) = joined.event else {
-        panic!("joined");
-    };
-    let room_id = longshipx_domain::RoomId(uuid::Uuid::parse_str(&joined.room_id).unwrap());
-    server.tokens.revoke_player(player.id()).await.unwrap();
-    server
-        .deps
-        .rooms
-        .chat(room_id, player.id(), "must not be delivered".into())
-        .await
-        .unwrap();
-    let reply = tokio::time::timeout(
-        Duration::from_secs(1),
-        read_frame(&mut client.reader, 65_536),
-    )
-    .await
-    .unwrap();
-    assert!(
-        !matches!(reply, Ok(Some(frame)) if matches!(ClientCodec.decode(&frame), Ok(OutboundMessage::RoomEvent(_)))),
-        "revoked connection still receives room data"
-    );
-    server.shutdown_tx.send_replace(true);
+        assert!(
+            !matches!(reply, Ok(Some(frame)) if matches!(ClientCodec.decode(&frame), Ok(OutboundMessage::RoomEvent(_)))),
+            "revoked connection still receives room data"
+        );
+        kcp::stop(server).await;
+    }
 }
 
 #[tokio::test]
 async fn session_revocation_is_player_scoped_and_releases_connections() {
-    let server = spawn_server().await;
-    let (bind, _) = make_player_with_token(&server, "revoked-shared").await;
-    let id = server.tokens.resolve(&bind.token).await.unwrap().unwrap();
-    let (other, _) = make_player_with_token(&server, "unrelated").await;
-    let mut alice = TestClient::connect(server.addr).await;
-    let mut second = TestClient::connect(server.addr).await;
-    let mut bob = TestClient::connect(server.addr).await;
-    for (client, request) in [
-        (&mut alice, bind.clone()),
-        (&mut second, bind),
-        (&mut bob, other),
-    ] {
-        client.send(&InboundMessage::Bind(request)).await;
-        client.recv_expect("bind").await;
-    }
-    server.tokens.revoke_player(id).await.unwrap();
-    for client in [&mut alice, &mut second] {
-        client
-            .send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
-            .await;
-        assert!(
-            matches!(client.recv_expect("rejected").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
-        );
-    }
-    bob.send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
+    for kcp in [false, true] {
+        let tokens = Arc::new(InMemoryTokenStore::new());
+        let server = spawn_server_transport(
+            test_config("127.0.0.1:0".parse().unwrap()),
+            tokens.clone(),
+            tokens,
+            build_router(),
+            kcp,
+        )
         .await;
-    assert!(matches!(bob.recv_expect("profile").await, OutboundMessage::Profile(p) if p.ok));
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while server.deps.connections.active_count() != 1 {
-            tokio::task::yield_now().await;
+        let (bind, _) = make_player_with_token(&server, "revoked-shared").await;
+        let id = server.tokens.resolve(&bind.token).await.unwrap().unwrap();
+        let (other, _) = make_player_with_token(&server, "unrelated").await;
+        let mut alice = TestClient::connect_transport(server.addr, kcp).await;
+        let mut second = TestClient::connect_transport(server.addr, kcp).await;
+        let mut bob = TestClient::connect_transport(server.addr, kcp).await;
+        for (client, request) in [
+            (&mut alice, bind.clone()),
+            (&mut second, bind),
+            (&mut bob, other),
+        ] {
+            client.send(&InboundMessage::Bind(request)).await;
+            client.recv_expect("bind").await;
         }
-    })
-    .await
-    .unwrap();
-    server.shutdown_tx.send_replace(true);
+        server.tokens.revoke_player(id).await.unwrap();
+        for client in [&mut alice, &mut second] {
+            client
+                .send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
+                .await;
+            assert!(
+                matches!(client.recv_expect("rejected").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+            );
+        }
+        bob.send(&InboundMessage::GetProfile(pb::GetProfileRequest {}))
+            .await;
+        assert!(matches!(bob.recv_expect("profile").await, OutboundMessage::Profile(p) if p.ok));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while server.deps.connections.active_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        kcp::stop(server).await;
+    }
 }
 
 #[tokio::test]
@@ -596,31 +659,34 @@ async fn session_store_errors_and_stalls_fail_closed() {
             self.inner.resolve(token).await
         }
     }
-    for stall in [false, true] {
-        let tokens = Arc::new(InMemoryTokenStore::new());
-        let store = Arc::new(FaultStore {
-            inner: tokens.clone(),
-            fail: AtomicBool::new(false),
-            stall,
-        });
-        let mut config = test_config("127.0.0.1:0".parse().unwrap());
-        config.heartbeat_timeout = Duration::from_millis(100);
-        let server = spawn_server_with_tokens(config, tokens, store.clone()).await;
-        let (bind, _) = make_player_with_token(&server, "store-failure").await;
-        let mut client = TestClient::connect(server.addr).await;
-        client.send(&InboundMessage::Bind(bind)).await;
-        client.recv_expect("bind").await;
-        store.fail.store(true, Ordering::SeqCst);
-        client
-            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
-                room_id: None,
-            }))
-            .await;
-        assert!(
-            matches!(client.recv_expect("rejected").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
-        );
-        assert_eq!(server.deps.rooms.active_rooms().await, 0);
-        server.shutdown_tx.send_replace(true);
+    for kcp in [false, true] {
+        for stall in [false, true] {
+            let tokens = Arc::new(InMemoryTokenStore::new());
+            let store = Arc::new(FaultStore {
+                inner: tokens.clone(),
+                fail: AtomicBool::new(false),
+                stall,
+            });
+            let mut config = test_config("127.0.0.1:0".parse().unwrap());
+            config.heartbeat_timeout = Duration::from_millis(300);
+            let server =
+                spawn_server_transport(config, tokens, store.clone(), build_router(), kcp).await;
+            let (bind, _) = make_player_with_token(&server, "store-failure").await;
+            let mut client = TestClient::connect_transport(server.addr, kcp).await;
+            client.send(&InboundMessage::Bind(bind)).await;
+            client.recv_expect("bind").await;
+            store.fail.store(true, Ordering::SeqCst);
+            client
+                .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                    room_id: None,
+                }))
+                .await;
+            assert!(
+                matches!(client.recv_expect("rejected").await, OutboundMessage::Error(e) if e.code == longshipx_protocol::ERR_NOT_AUTHENTICATED)
+            );
+            assert_eq!(server.deps.rooms.active_rooms().await, 0);
+            server.shutdown_tx.send_replace(true);
+        }
     }
 }
 
@@ -748,113 +814,154 @@ async fn slow_bind_lookup_cannot_outlive_authentication_deadline() {
 async fn both_queue_overloads_disconnect_only_the_affected_room_member() {
     use longshipx_gateway::tcp::handlers::handle_heartbeat;
     use longshipx_protocol::opcodes::OP_C2S_HEARTBEAT;
-    for room_queue in [true, false] {
-        let mut router = build_router();
-        router.route(
-            OP_C2S_HEARTBEAT,
-            move |ctx: longshipx_gateway::tcp::ConnContext, message| async move {
-                if ctx.authed_player().unwrap().nickname == "overload" {
-                    // No yield: fill the real queue before its consumer can run on this runtime.
-                    for _ in 0..65 {
-                        if room_queue {
-                            ctx.room_tx
-                                .try_send(longshipx_application::RoomEvent::Closed {
-                                    room_id: ctx.current_room().unwrap(),
-                                    reason: "test overload".into(),
-                                });
-                        } else {
-                            let _ = ctx
-                                .outbound
-                                .try_send_frame(longshipx_net_kit::Frame::new(1, vec![]));
+    for kcp in [false, true] {
+        for room_queue in [true, false] {
+            let mut router = build_router();
+            router.route(
+                OP_C2S_HEARTBEAT,
+                move |ctx: longshipx_gateway::tcp::ConnContext, message| async move {
+                    if ctx.authed_player().unwrap().nickname == "overload" {
+                        // No yield: fill the real queue before its consumer can run on this runtime.
+                        for _ in 0..65 {
+                            if room_queue {
+                                ctx.room_tx
+                                    .try_send(longshipx_application::RoomEvent::Closed {
+                                        room_id: ctx.current_room().unwrap(),
+                                        reason: "test overload".into(),
+                                    });
+                            } else {
+                                let _ = ctx
+                                    .outbound
+                                    .try_send_frame(longshipx_net_kit::Frame::new(1, vec![]));
+                            }
                         }
+                        Ok(None)
+                    } else {
+                        handle_heartbeat(ctx, message).await
                     }
-                    Ok(None)
-                } else {
-                    handle_heartbeat(ctx, message).await
+                },
+            );
+            let tokens = Arc::new(InMemoryTokenStore::new());
+            let server = spawn_server_transport(
+                test_config("127.0.0.1:0".parse().unwrap()),
+                tokens.clone(),
+                tokens,
+                router,
+                kcp,
+            )
+            .await;
+            let mut victim = TestClient::connect_transport(server.addr, kcp).await;
+            let (bind, _) = make_player_with_token(&server, "overload").await;
+            victim.send(&InboundMessage::Bind(bind)).await;
+            victim.recv_expect("bind").await;
+            victim
+                .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                    room_id: None,
+                }))
+                .await;
+            let OutboundMessage::RoomEvent(joined) = victim.recv_expect("join").await else {
+                panic!("missing join");
+            };
+            let Some(pb::room_event_notification::Event::MemberJoined(joined)) = joined.event
+            else {
+                panic!("missing member join");
+            };
+            let mut healthy = TestClient::connect_transport(server.addr, kcp).await;
+            let (bind, _) = make_player_with_token(&server, "healthy").await;
+            healthy.send(&InboundMessage::Bind(bind)).await;
+            healthy.recv_expect("bind").await;
+            healthy
+                .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
+                    room_id: Some(joined.room_id),
+                }))
+                .await;
+            healthy.recv_expect("join").await;
+            victim.recv_expect("peer join").await;
+            let trigger = ClientCodec
+                .encode(&InboundMessage::Heartbeat(pb::HeartbeatPing {
+                    client_ts_ms: 0,
+                }))
+                .unwrap();
+            // Forced disconnect may precede the transport ACK; do not wait for a flush.
+            victim
+                .writer
+                .write_all(&longshipx_net_kit::encode_frame(&trigger, 65_536).unwrap())
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while server.deps.connections.active_count() != 1 {
+                    tokio::task::yield_now().await;
                 }
-            },
-        );
-        let server =
-            spawn_server_with_router(test_config("127.0.0.1:0".parse().unwrap()), router).await;
-        let mut victim = TestClient::connect(server.addr).await;
-        let (bind, _) = make_player_with_token(&server, "overload").await;
-        victim.send(&InboundMessage::Bind(bind)).await;
-        victim.recv_expect("bind").await;
-        victim
-            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
-                room_id: None,
-            }))
-            .await;
-        let OutboundMessage::RoomEvent(joined) = victim.recv_expect("join").await else {
-            panic!("missing join");
-        };
-        let Some(pb::room_event_notification::Event::MemberJoined(joined)) = joined.event else {
-            panic!("missing member join");
-        };
-        let mut healthy = TestClient::connect(server.addr).await;
-        let (bind, _) = make_player_with_token(&server, "healthy").await;
-        healthy.send(&InboundMessage::Bind(bind)).await;
-        healthy.recv_expect("bind").await;
-        healthy
-            .send(&InboundMessage::JoinRoom(pb::JoinRoomRequest {
-                room_id: Some(joined.room_id),
-            }))
-            .await;
-        healthy.recv_expect("join").await;
-        victim.recv_expect("peer join").await;
-        victim
-            .send(&InboundMessage::Heartbeat(pb::HeartbeatPing {
-                client_ts_ms: 0,
-            }))
-            .await;
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while server.deps.connections.active_count() != 1 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        let left = healthy.recv_expect("departed overload member").await;
-        assert!(matches!(
-            left,
-            OutboundMessage::RoomEvent(pb::RoomEventNotification {
-                event: Some(pb::room_event_notification::Event::MemberLeft(_)),
-                ..
             })
-        ));
-        assert_eq!(server.deps.auth_gate.unauth_count(server.addr.ip()), 0);
-        let end = tokio::time::timeout(
-            Duration::from_secs(1),
-            read_frame(&mut victim.reader, 65_536),
-        )
-        .await
-        .unwrap();
-        assert!(
-            matches!(end, Ok(None) | Err(_)),
-            "overloaded TLS connection remained readable"
-        );
-        healthy
-            .send(&InboundMessage::Heartbeat(pb::HeartbeatPing {
-                client_ts_ms: 0,
-            }))
-            .await;
-        assert!(matches!(
-            healthy.recv_expect("healthy heartbeat").await,
-            OutboundMessage::HeartbeatAck(_)
-        ));
-        drop(victim);
-        drop(healthy);
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while server.deps.connections.active_count() != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        server.shutdown_tx.send_replace(true);
-        server.handle.await.unwrap();
+            .await
+            .unwrap();
+            let left = healthy.recv_expect("departed overload member").await;
+            assert!(matches!(
+                left,
+                OutboundMessage::RoomEvent(pb::RoomEventNotification {
+                    event: Some(pb::room_event_notification::Event::MemberLeft(_)),
+                    ..
+                })
+            ));
+            assert_eq!(server.deps.auth_gate.unauth_count(server.addr.ip()), 0);
+            healthy
+                .send(&InboundMessage::Heartbeat(pb::HeartbeatPing {
+                    client_ts_ms: 0,
+                }))
+                .await;
+            assert!(matches!(
+                healthy.recv_expect("healthy heartbeat").await,
+                OutboundMessage::HeartbeatAck(_)
+            ));
+            let end = tokio::time::timeout(
+                Duration::from_secs(4),
+                read_frame(&mut victim.reader, 65_536),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("overload EOF timeout: kcp={kcp} room_queue={room_queue}"));
+            assert!(
+                matches!(end, Ok(None) | Err(_)),
+                "overloaded TLS connection remained readable"
+            );
+            drop(victim);
+            drop(healthy);
+            tokio::time::timeout(Duration::from_secs(4), async {
+                while server.deps.connections.active_count() != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!("overload cleanup timeout: kcp={kcp} room_queue={room_queue}")
+            });
+            server.shutdown_tx.send_replace(true);
+            server.handle.await.unwrap();
+        }
     }
 }
 
 #[path = "e2e/room_membership.rs"]
 mod room_membership;
+
+#[path = "e2e/kcp.rs"]
+mod kcp;
+
+#[path = "e2e/kcp_network.rs"]
+mod kcp_network;
+
+#[path = "e2e/kcp_blackbox.rs"]
+mod kcp_blackbox;
+
+#[path = "e2e/kcp_stress.rs"]
+mod kcp_stress;
+
+fn kcp_settings() -> longshipx_net_kit::kcp::KcpSettings {
+    longshipx_net_kit::kcp::KcpSettings {
+        mtu: 1200,
+        window: 64,
+        interval: Duration::from_millis(10),
+        idle_timeout: Duration::from_secs(2),
+        max_sessions: 64,
+        queue_capacity: 256,
+    }
+}

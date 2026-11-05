@@ -9,9 +9,11 @@ use std::hint::black_box;
 use std::sync::Arc;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use longshipx_net_kit::Transport;
 use longshipx_net_kit::backpressure::OutboundSender;
 use longshipx_net_kit::codec::Frame;
 use longshipx_net_kit::connection::{ConnectionConfig, FrameReader, split_connection};
+use longshipx_net_kit::kcp::{KcpSettings, KcpStream, KcpTransport};
 use longshipx_net_kit::tls::server_acceptor_from_pem_bytes;
 use rustls::pki_types::pem::PemObject as _;
 use tokio::net::{TcpListener, TcpStream};
@@ -147,6 +149,89 @@ fn spawn_tls_echo(rt: &Runtime) -> std::net::SocketAddr {
         tokio::spawn(serve_tls_echo(listener, acceptor));
         addr
     })
+}
+
+fn kcp_settings() -> KcpSettings {
+    KcpSettings {
+        mtu: 1200,
+        window: 64,
+        interval: std::time::Duration::from_millis(10),
+        idle_timeout: std::time::Duration::from_secs(60),
+        max_sessions: 16,
+        queue_capacity: 256,
+    }
+}
+
+fn spawn_kcp_echo(rt: &Runtime) -> std::net::SocketAddr {
+    rt.block_on(async {
+        let listener = KcpTransport::bind("127.0.0.1:0".parse().unwrap(), kcp_settings())
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (cert, key) = cert_pems();
+        let acceptor = server_acceptor_from_pem_bytes(cert, key).unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (io, _) = listener.accept().await.unwrap();
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let tls = acceptor.accept(io).await.unwrap();
+                    let (reader, sender, _writer) = split_connection(tls, bench_config());
+                    echo_loop(reader, sender).await;
+                });
+            }
+        });
+        addr
+    })
+}
+
+fn bench_kcp(c: &mut Criterion) {
+    let rt = runtime();
+    let mut group = c.benchmark_group("net-kit/transport_tls");
+    group.sample_size(10);
+    for kcp in [false, true] {
+        let addr = if kcp {
+            spawn_kcp_echo(&rt)
+        } else {
+            spawn_tls_echo(&rt)
+        };
+        let connector = tls_client();
+        let (mut reader, sender, _writer) = rt.block_on(async {
+            let raw: Box<dyn longshipx_net_kit::transport::ConnectionIo> = if kcp {
+                Box::new(KcpStream::connect(addr, kcp_settings()).await.unwrap())
+            } else {
+                let tcp = TcpStream::connect(addr).await.unwrap();
+                tcp.set_nodelay(true).unwrap();
+                Box::new(tcp)
+            };
+            split_connection(
+                connector.connect(server_domain(), raw).await.unwrap(),
+                bench_config(),
+            )
+        });
+        for size in [32, 65_536] {
+            let frame = Frame::new(0x0012, vec![42; size]);
+            group.throughput(Throughput::Bytes(size as u64));
+            group.bench_function(
+                format!("{}_roundtrip_{size}B", if kcp { "kcp" } else { "tcp" }),
+                |b| {
+                    b.iter(|| {
+                        rt.block_on(async {
+                            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                                sender.send_frame(frame.clone()).await.unwrap();
+                                let received = reader.read_frame().await.unwrap().unwrap();
+                                assert_eq!(received, frame);
+                                black_box(received)
+                            })
+                            .await
+                            .unwrap()
+                        })
+                    })
+                },
+            );
+        }
+    }
+    group.finish();
 }
 
 fn spawn_accept_only(rt: &Runtime) -> std::net::SocketAddr {
@@ -298,5 +383,11 @@ fn bench_throughput(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_roundtrip, bench_handshake, bench_throughput);
+criterion_group!(
+    benches,
+    bench_roundtrip,
+    bench_handshake,
+    bench_throughput,
+    bench_kcp
+);
 criterion_main!(benches);

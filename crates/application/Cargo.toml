@@ -2,7 +2,7 @@
 name = "longshipx-application"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 authors = ["The LongshipX Contributors"]
 description = "应用层:用例编排(Command/Query)、端口 trait、事务边界抽象与 Room Actor"
 license = "MIT OR Apache-2.0"
